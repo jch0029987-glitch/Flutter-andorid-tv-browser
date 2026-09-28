@@ -34,103 +34,125 @@ class BrowserHomePage extends StatefulWidget {
 class _BrowserHomePageState extends State<BrowserHomePage> {
   late final WebViewController _controller;
   final TextEditingController _urlController = TextEditingController();
-  String _currentUrl = 'https://www.google.com';
+  final String _homeUrl = 'https://www.google.com';
+  bool _canGoBack = false;
+  bool _canGoForward = false;
 
   @override
   void initState() {
     super.initState();
-    _urlController.text = _currentUrl;
-    
-    // Initialize the WebView controller
+    _urlController.text = _homeUrl;
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (String url) {
+          onPageFinished: (String url) async {
+            final back = await _controller.canGoBack();
+            final forward = await _controller.canGoForward();
             setState(() {
               _currentUrl = url;
               _urlController.text = url;
+              _canGoBack = back;
+              _canGoForward = forward;
             });
+          },
+          onWebResourceError: (WebResourceError error) {
+            debugPrint('WebView Error: ${error.description}');
           },
         ),
       )
-      ..loadRequest(Uri.parse(_currentUrl));
+      ..loadRequest(Uri.parse(_homeUrl));
   }
+
+  String _currentUrl = 'https://www.google.com';
 
   void _loadUrl(String input) {
     String formattedUrl = input.trim();
     if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-      // If it's a search term rather than a URL, fall back to a search engine
       if (formattedUrl.contains(' ') || !formattedUrl.contains('.')) {
         formattedUrl = 'https://www.google.com/search?q=${Uri.encodeComponent(formattedUrl)}';
       } else {
         formattedUrl = 'https://$formattedUrl';
       }
     }
-    
     _controller.loadRequest(Uri.parse(formattedUrl));
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          // TV Remote Accessible Top Bar (Address bar & controls)
-          Container(
-            padding: const EdgeInsets.all(12.0),
-            color: Colors.grey[900],
-            child: Row(
-              children: [
-                // Back Button
-                IconButton(
-                  focusColor: Colors.blueAccent,
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: () async {
-                    if (await _controller.canGoBack()) {
-                      _controller.goBack();
-                    }
-                  },
-                ),
-                const SizedBox(width: 8),
-                // Forward Button
-                IconButton(
-                  focusColor: Colors.blueAccent,
-                  icon: const Icon(Icons.arrow_forward),
-                  onPressed: () async {
-                    if (await _controller.canGoForward()) {
-                      _controller.goForward();
-                    }
-                  },
-                ),
-                const SizedBox(width: 12),
-                // Address/Search Bar Text Field
-                Expanded(
-                  child: TextField(
-                    controller: _urlController,
-                    decoration: InputDecoration(
-                      hintText: 'Enter URL or search query...',
-                      filled: true,
-                      fillColor: Colors.grey[800],
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8.0),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    ),
-                    onSubmitted: (value) {
-                      _loadUrl(value);
-                    },
+    // PopScope handles Android TV remote Back button behavior safely
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        
+        if (await _controller.canGoBack()) {
+          _controller.goBack();
+        } else {
+          // If no more history, allow app to exit
+          if (context.mounted) {
+            Navigator.of(context).pop();
+          }
+        }
+      },
+      child: Scaffold(
+        body: Column(
+          children: [
+            // Top Toolbar (Remote Focusable)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+              color: Colors.grey[900],
+              child: Row(
+                children: [
+                  IconButton(
+                    focusColor: Colors.blueAccent,
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: _canGoBack
+                        ? () => _controller.goBack()
+                        : null,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  IconButton(
+                    focusColor: Colors.blueAccent,
+                    icon: const Icon(Icons.arrow_forward),
+                    onPressed: _canGoForward
+                        ? () => _controller.goForward()
+                        : null,
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    focusColor: Colors.blueAccent,
+                    icon: const Icon(Icons.home),
+                    onPressed: () => _loadUrl(_homeUrl),
+                  ),
+                  const SizedBox(width: 16),
+                  // URL / Search Input
+                  Expanded(
+                    child: TextField(
+                      controller: _urlController,
+                      decoration: InputDecoration(
+                        hintText: 'Search or enter address...',
+                        filled: true,
+                        fillColor: Colors.grey[800],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      ),
+                      onSubmitted: (value) => _loadUrl(value),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          // WebView Body Content
-          Expanded(
-            child: WebViewWidget(controller: _controller),
-          ),
-        ],
+            // Core Web Engine View
+            Expanded(
+              child: WebViewWidget(controller: _controller),
+            ),
+          ],
+        ),
       ),
     );
   }
