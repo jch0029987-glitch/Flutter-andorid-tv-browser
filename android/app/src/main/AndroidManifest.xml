@@ -30,7 +30,7 @@
         android:label="Flutter Browser Next"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@drawable/app_banner">
+        android:banner="@mipmap/ic_launcher">
         
         <!-- FileProvider required for secure APK installation on Android 7.0+ -->
         <provider
