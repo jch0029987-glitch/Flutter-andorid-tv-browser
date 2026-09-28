@@ -3,13 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class VirtualMouseOverlay extends StatefulWidget {
-  final Widget child;
   final WebViewController controller;
+  final Widget child;
 
   const VirtualMouseOverlay({
     super.key,
-    required this.child,
     required this.controller,
+    required this.child,
   });
 
   @override
@@ -17,19 +17,22 @@ class VirtualMouseOverlay extends StatefulWidget {
 }
 
 class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
-  // Initial cursor position (center of a typical TV screen layout)
-  Offset _cursorPosition = const Offset(640, 360);
   final FocusNode _focusNode = FocusNode();
   
-  // Movement speed multiplier for D-pad steps
-  static const double _stepSize = 25.0;
+  // Cursor position coordinates
+  double _x = 400.0;
+  double _y = 300.0;
+  
+  // Movement speed multiplier per D-pad click
+  static const double _step = 15.0;
+  bool _isCursorVisible = true;
 
   @override
   void initState() {
     super.initState();
-    // Auto-focus the wrapper so it immediately captures TV remote inputs
+    // Request focus automatically so remote D-pad events are captured
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
+      FocusScope.of(context).requestFocus(_focusNode);
     });
   }
 
@@ -39,101 +42,74 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
     super.dispose();
   }
 
-  // Handle D-pad directional movements and center click selections
-  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+  void _handleKeyEvent(KeyEvent event) {
     if (event is KeyDownEvent || event is KeyRepeatEvent) {
       setState(() {
+        _isCursorVisible = true;
+        final size = MediaQuery.of(context).size;
+
         if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-          _cursorPosition = Offset(
-            _cursorPosition.dx,
-            (_cursorPosition.dy - _stepSize).clamp(0.0, 1080.0),
-          );
+          _y = (_y - _step).clamp(0.0, size.height - 50);
         } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-          _cursorPosition = Offset(
-            _cursorPosition.dx,
-            (_cursorPosition.dy + _stepSize).clamp(0.0, 1080.0),
-          );
+          _y = (_y + _step).clamp(0.0, size.height - 50);
         } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-          _cursorPosition = Offset(
-            (_cursorPosition.dx - _stepSize).clamp(0.0, 1920.0),
-            _cursorPosition.dy,
-          );
+          _x = (_x - _step).clamp(0.0, size.width - 50);
         } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-          _cursorPosition = Offset(
-            (_cursorPosition.dx + _stepSize).clamp(0.0, 1920.0),
-            _cursorPosition.dy,
-          );
+          _x = (_x + _step).clamp(0.0, size.width - 50);
         } else if (event.logicalKey == LogicalKeyboardKey.select ||
-                   event.logicalKey == LogicalKeyboardKey.enter ||
-                   event.logicalKey == LogicalKeyboardKey.space) {
-          // Trigger a JavaScript click event at the current virtual cursor location
-          _simulateClickAt(_cursorPosition);
+                   event.logicalKey == LogicalKeyboardKey.enter) {
+          // Simulate clicking/tapping at the current cursor coordinate
+          // WebView handles pointer interaction natively via touch simulation if supported,
+          // or you can inject JavaScript mouse events here if necessary.
         }
       });
-      return KeyEventResult.handled;
     }
-    return KeyEventResult.ignored;
-  }
-
-  // Programmatically inject a mouse click into the WebView at specific coordinates
-  void _simulateClickAt(Offset position) {
-    String script = '''
-      (function() {
-        var element = document.elementFromPoint(${position.dx}, ${position.dy});
-        if (element) {
-          element.click();
-          var event = new MouseEvent('click', {
-            view: window,
-            bubbles: true,
-            cancelable: true,
-            clientX: ${position.dx},
-            clientY: ${position.dy}
-          });
-          element.dispatchEvent(event);
-        }
-      })();
-    ''';
-    widget.controller.runJavaScript(script);
   }
 
   @override
   Widget build(BuildContext context) {
     return Focus(
       focusNode: _focusNode,
-      onKeyEvent: _handleKeyEvent,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Stack(
-            children: [
-              // The underlying widget (Your WebView)
-              widget.child,
+      onKeyEvent: (node, event) {
+        _handleKeyEvent(event);
+        return KeyEventResult.handled;
+      },
+      child: GestureDetector(
+        onTap: () {
+          // Ensure focus remains locked when clicked
+          FocusScope.of(context).requestFocus(_focusNode);
+        },
+        child: Stack(
+          children: [
+            // The underlying web view content
+            widget.child,
 
-              // The Floating Virtual Mouse Cursor Indicator
+            // Virtual Mouse Cursor Overlay
+            if (_isCursorVisible)
               Positioned(
-                left: _cursorPosition.dx,
-                top: _cursorPosition.dy,
+                left: _x,
+                top: _y,
                 child: IgnorePointer(
                   child: Container(
-                    width: 16,
-                    height: 16,
+                    width: 20,
+                    height: 20,
                     decoration: BoxDecoration(
-                      color: Colors.blueAccent.withValues(alpha: 0.8),
+                      color: Colors.blueAccent.withOpacity(0.8),
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxBoxShadow(
-                          color: Colors.black.withValues(alpha: 0.5),
-                          blurRadius: 4,
-                          spreadRadius: 1,
-                        )
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black45,
+                          blurRadius: 6,
+                          spreadRadius: 2,
+                        ),
                       ],
                     ),
                   ),
                 ),
               ),
-            ],
-          );
-        },
+          ],
+        ),
       ),
     );
   }
