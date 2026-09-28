@@ -1,4 +1,4 @@
-# flutv
+# flutter_browser_next
 
 A new Flutter project.
 
