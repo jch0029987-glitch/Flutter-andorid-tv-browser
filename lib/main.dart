@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'virtual_mouse.dart'; // Import your separate virtual mouse component
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -147,9 +148,12 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                 ],
               ),
             ),
-            // Core Web Engine View
+            // Core Web Engine wrapped inside the Virtual Mouse Overlay
             Expanded(
-              child: WebViewWidget(controller: _controller),
+              child: VirtualMouseOverlay(
+                controller: _controller,
+                child: WebViewWidget(controller: _controller),
+              ),
             ),
           ],
         ),
