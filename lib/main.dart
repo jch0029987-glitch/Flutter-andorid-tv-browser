@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'virtual_mouse.dart'; // Import your separate virtual mouse component
+import 'update_service.dart'; // Import the new GitHub update checker
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,6 +65,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       )
       ..loadRequest(Uri.parse(_homeUrl));
+
+    // Automatically check for GitHub updates silently right after launch
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdateService.checkForUpdates(context, silent: true);
+    });
   }
 
   String _currentUrl = 'https://www.google.com';
