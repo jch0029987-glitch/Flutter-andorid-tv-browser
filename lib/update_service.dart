@@ -8,8 +8,8 @@ import 'package:package_info_plus/package_info_plus.dart'; // Optional or parse 
 
 class UpdateService {
   // Replace with your actual GitHub owner and repo name
-  static const String repoOwner = 'YOUR_GITHUB_USERNAME';
-  static const String repoName = 'flutter_browser_next';
+  static const String repoOwner = 'jch0029987-glitch';
+  static const String repoName = 'flutter-android-tv-browser';
 
   static Future<void> checkForUpdates(BuildContext context, {bool silent = true}) async {
     try {
