@@ -21,8 +21,10 @@ on:
 
 jobs:
   build:
-    name: Generate Keystore & Build
+    name: Generate Keystore, Build & Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -81,6 +83,13 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Extract App Version from pubspec.yaml
+        id: extract_version
+        run: |
+          VERSION=$(grep '^version: ' pubspec.yaml | cut -d ' ' -f 2 | tr -d '\r')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
       - name: Build Release APK
         env:
           KEYSTORE_FILE: "release-key.jks"
@@ -89,7 +98,22 @@ jobs:
           KEY_PASSWORD: "${{ secrets.KEY_PASSWORD }}"
         run: flutter build apk --release
 
-      - name: Upload APK Artifact
+      - name: Create GitHub Release and Upload APK Asset
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          TAG="v${{ steps.extract_version.outputs.version }}"
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          
+          echo "Creating GitHub Release for tag $TAG..."
+          gh release create "$TAG" "$APK_PATH" \
+            --repo ${{ github.repository }} \
+            --title "Flutter Browser Next $TAG" \
+            --notes "Automated Android TV release for version $TAG." \
+            --draft=false \
+            --prerelease=false
+
+      - name: Upload Backup Workflow Artifact
         uses: actions/upload-artifact@v4
         with:
           name: flutter-browser-next-apk
