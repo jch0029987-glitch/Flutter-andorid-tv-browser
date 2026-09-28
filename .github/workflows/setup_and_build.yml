@@ -2,22 +2,6 @@ name: Setup Keystore and Build Android TV APK
 
 on:
   workflow_dispatch:
-    inputs:
-      keystore_password:
-        description: 'Store Password for the Keystore'
-        required: true
-        type: string
-        default: 'my_secure_store_password'
-      key_alias:
-        description: 'Key Alias'
-        required: true
-        type: string
-        default: 'browser-alias'
-      key_password:
-        description: 'Password for the Specific Key'
-        required: true
-        type: string
-        default: 'my_secure_key_password'
 
 jobs:
   build:
@@ -135,18 +119,6 @@ jobs:
           skip = False
           for line in lines:
               if "workflow_dispatch:" in line:
-                  output.append(line)
-                  skip = True
-                  continue
-              if skip:
-                  if line and not line.startswith(" "):
-                      skip = False
-                  elif line.strip() == "":
-                      continue
-                  else:
-                      continue
-              if not skip:
-                  output.append(line)
 
           with open(path, "w") as f:
               f.writelines(output)
