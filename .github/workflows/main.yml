@@ -1,7 +1,8 @@
-name: Initialize flutv Structure
+name: Initialize Flutter Browser Next Structure
 
 on:
   workflow_dispatch:
+
 jobs:
   scaffold:
     name: Generate Android-Only Flutter Project
@@ -21,9 +22,13 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Wipe Old Files (Keep .github)
+        run: |
+          find . -maxdepth 1 ! -name '.' ! -name '..' ! -name '.git' ! -name '.github' -exec rm -rf {} +
+
       - name: Run Flutter Create (Android Only)
         run: |
-          flutter create . --org com.flutv --project-name flutv --platforms=android
+          flutter create . --org com.flutterbrowser --project-name flutter_browser_next --platforms=android
 
       - name: Commit and Push Generated Files
         env:
@@ -31,8 +36,8 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
+          git add -A
           git diff --quiet && git diff --staged --quiet || {
-            git commit -m "chore: generate android-only flutter structure"
+            git commit -m "chore: initialize flutter browser next structure"
             git push origin main
           }
