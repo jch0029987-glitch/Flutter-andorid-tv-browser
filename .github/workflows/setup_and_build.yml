@@ -45,8 +45,8 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Check and Auto-Generate Keystore Secrets
-        id: keystore_check
+      - name: Setup Keystore (Generate or Decode)
+        id: keystore_setup
         env:
           GH_TOKEN: ${{ secrets.MY_PAT }}
           INPUT_STORE_PASS: ${{ inputs.keystore_password }}
@@ -56,34 +56,38 @@ jobs:
           EXISTING_SECRETS=$(gh secret list --repo ${{ github.repository }} --json name --jq '.[].name')
           
           if echo "$EXISTING_SECRETS" | grep -q "KEYSTORE_BASE64"; then
-            echo "Keystore secrets already exist. Skipping generation."
+            echo "Keystore secrets exist. Decoding from repository secrets..."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release-key.jks
+            
+            # Pass existing secrets to build env via GITHUB_ENV
+            echo "BUILD_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "BUILD_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+            echo "BUILD_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
             echo "secret_created=false" >> $GITHUB_OUTPUT
           else
             echo "Generating new signing keystore with custom credentials..."
             
-            keytool -genkey -v -keystore auto-release-key.jks \
+            keytool -genkey -v -keystore android/app/release-key.jks \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -alias "$INPUT_ALIAS" \
               -storepass "$INPUT_STORE_PASS" \
               -keypass "$INPUT_KEY_PASS" \
               -dname "CN=Flutter Browser Next, O=OpenSource, C=US"
 
-            ENCODED_KEY=$(base64 -w 0 auto-release-key.jks)
+            ENCODED_KEY=$(base64 -w 0 android/app/release-key.jks)
 
-            echo "Uploading generated keystore to repository secrets (clean padding)..."
-            
+            echo "Uploading generated keystore to repository secrets..."
             echo -n "$ENCODED_KEY" | gh secret set KEYSTORE_BASE64 --repo ${{ github.repository }}
             echo -n "$INPUT_STORE_PASS" | gh secret set KEYSTORE_PASSWORD --repo ${{ github.repository }}
             echo -n "$INPUT_ALIAS" | gh secret set KEY_ALIAS --repo ${{ github.repository }}
             echo -n "$INPUT_KEY_PASS" | gh secret set KEY_PASSWORD --repo ${{ github.repository }}
             
-            echo "Custom secrets successfully created and saved!"
+            # Pass input credentials directly to build env for this first run
+            echo "BUILD_STORE_PASSWORD=$INPUT_STORE_PASS" >> $GITHUB_ENV
+            echo "BUILD_KEY_ALIAS=$INPUT_ALIAS" >> $GITHUB_ENV
+            echo "BUILD_KEY_PASSWORD=$INPUT_KEY_PASS" >> $GITHUB_ENV
             echo "secret_created=true" >> $GITHUB_OUTPUT
           fi
-
-      - name: Decode Keystore for Build
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release-key.jks
 
       - name: Install Dependencies
         run: flutter pub get
@@ -98,9 +102,9 @@ jobs:
       - name: Build Release APK
         env:
           KEYSTORE_FILE: "release-key.jks"
-          KEYSTORE_PASSWORD: "${{ secrets.KEYSTORE_PASSWORD }}"
-          KEY_ALIAS: "${{ secrets.KEY_ALIAS }}"
-          KEY_PASSWORD: "${{ secrets.KEY_PASSWORD }}"
+          KEYSTORE_PASSWORD: "${{ env.BUILD_STORE_PASSWORD }}"
+          KEY_ALIAS: "${{ env.BUILD_KEY_ALIAS }}"
+          KEY_PASSWORD: "${{ env.BUILD_KEY_PASSWORD }}"
         run: flutter build apk --release
 
       - name: Create GitHub Release and Upload APK Asset
@@ -119,7 +123,7 @@ jobs:
             --prerelease=false
 
       - name: Remove Input Dialogue After Successful First Run
-        if: steps.keystore_check.outputs.secret_created == 'true'
+        if: steps.keystore_setup.outputs.secret_created == 'true'
         run: |
           echo "First run complete! Removing input dialogue from workflow file..."
           python3 -c '
