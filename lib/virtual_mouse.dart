@@ -30,7 +30,6 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
   @override
   void initState() {
     super.initState();
-    // Request focus automatically so remote D-pad events are captured
     WidgetsBinding.instance.addPostFrameCallback((_) {
       FocusScope.of(context).requestFocus(_focusNode);
     });
@@ -57,10 +56,31 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
         } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
           _x = (_x + _step).clamp(0.0, size.width - 50);
         } else if (event.logicalKey == LogicalKeyboardKey.select ||
-                   event.logicalKey == LogicalKeyboardKey.enter) {
-          // Simulate clicking/tapping at the current cursor coordinate
-          // WebView handles pointer interaction natively via touch simulation if supported,
-          // or you can inject JavaScript mouse events here if necessary.
+                   event.logicalKey == LogicalKeyboardKey.enter ||
+                   event.logicalKey == LogicalKeyboardKey.space) {
+          
+          // Simulate a mouse click in the WebView at the current cursor coordinates
+          widget.controller.runJavaScript('''
+            (function() {
+              var x = $_x;
+              var y = $_y;
+              var element = document.elementFromPoint(x, y);
+              if (element) {
+                element.focus();
+                element.click();
+                
+                // Dispatch explicit mouse event for deep compatibility with web frameworks
+                var clickEvent = new MouseEvent('click', {
+                  view: window,
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: x,
+                  clientY: y
+                });
+                element.dispatchEvent(clickEvent);
+              }
+            })();
+          ''');
         }
       });
     }
@@ -76,7 +96,6 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
       },
       child: GestureDetector(
         onTap: () {
-          // Ensure focus remains locked when clicked
           FocusScope.of(context).requestFocus(_focusNode);
         },
         child: Stack(
