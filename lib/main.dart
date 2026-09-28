@@ -43,6 +43,14 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _currentUrl = 'https://www.google.com';
+  
+  // User Agent Mode State
+  bool _isDesktopMode = true;
+  
+  static const String _desktopUserAgent = 
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  static const String _mobileUserAgent = 
+      "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
   @override
   void initState() {
@@ -51,8 +59,17 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent(_desktopUserAgent)
       ..setNavigationDelegate(
         NavigationDelegate(
+          // Ad-blocker & tracker interception
+          onNavigationRequest: (NavigationRequest request) {
+            if (_isAdOrTracker(request.url)) {
+              debugPrint('🚫 Blocked Ad/Tracker: ${request.url}');
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
           onPageFinished: (String url) async {
             final back = await _controller.canGoBack();
             final forward = await _controller.canGoForward();
@@ -83,6 +100,52 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     super.dispose();
   }
 
+  // Toggle between Desktop and Mobile User Agents
+  void _toggleDesktopMode() async {
+    setState(() {
+      _isDesktopMode = !_isDesktopMode;
+    });
+
+    final targetUserAgent = _isDesktopMode ? _desktopUserAgent : _mobileUserAgent;
+    await _controller.setUserAgent(targetUserAgent);
+    _controller.reload();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_isDesktopMode ? "Switched to Desktop Mode" : "Switched to Mobile Mode"),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  // Domain filter for the lightweight built-in ad blocker
+  bool _isAdOrTracker(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    
+    final host = uri.host.toLowerCase();
+
+    const blockedDomains = {
+      'googlesyndication.com',
+      'doubleclick.net',
+      'adservice.google.com',
+      'amazon-adsystem.com',
+      'adnxs.com',
+      'ads.twitter.com',
+      'facebook.com/tr',
+      'hotjar.com',
+      'segment.io',
+      'scorecardresearch.com',
+    };
+
+    for (var domain in blockedDomains) {
+      if (host == domain || host.endsWith('.$domain')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void _loadUrl(String input) {
     String formattedUrl = input.trim();
     if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
@@ -93,7 +156,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       }
     }
     _controller.loadRequest(Uri.parse(formattedUrl));
-    // Unfocus URL bar after loading to return navigation priority
     FocusScope.of(context).unfocus();
   }
 
@@ -108,7 +170,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         if (await _controller.canGoBack()) {
           _controller.goBack();
         } else {
-          // If no more history, allow app to exit
           if (context.mounted) {
             Navigator.of(context).pop();
           }
@@ -116,7 +177,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       },
       child: Scaffold(
         body: Focus(
-          // Global shortcut listener for remote buttons (e.g. Menu button to focus URL bar)
+          // Shortcut listener (e.g. Menu button on remote to focus the URL bar)
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent) {
               if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
@@ -141,21 +202,29 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       onPressed: _canGoBack ? () => _controller.goBack() : null,
                       tooltip: 'Back',
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 4),
                     IconButton(
                       focusColor: Colors.blueAccent,
                       icon: const Icon(Icons.arrow_forward),
                       onPressed: _canGoForward ? () => _controller.goForward() : null,
                       tooltip: 'Forward',
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 4),
                     IconButton(
                       focusColor: Colors.blueAccent,
                       icon: const Icon(Icons.home),
                       onPressed: () => _loadUrl(_homeUrl),
                       tooltip: 'Home',
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 4),
+                    // Desktop / Mobile Mode Toggle Button
+                    IconButton(
+                      focusColor: Colors.blueAccent,
+                      icon: Icon(_isDesktopMode ? Icons.desktop_windows : Icons.phone_android),
+                      onPressed: _toggleDesktopMode,
+                      tooltip: _isDesktopMode ? 'Switch to Mobile View' : 'Switch to Desktop View',
+                    ),
+                    const SizedBox(width: 12),
                     // URL / Search Input
                     Expanded(
                       child: TextField(
