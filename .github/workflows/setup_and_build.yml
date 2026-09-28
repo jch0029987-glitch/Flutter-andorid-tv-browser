@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_PAT }} # Required to push the workflow cleanup change back
 
       - name: Set up Java JDK
         uses: actions/setup-java@v4
@@ -44,6 +46,7 @@ jobs:
           cache: true
 
       - name: Check and Auto-Generate Keystore Secrets
+        id: keystore_check
         env:
           GH_TOKEN: ${{ secrets.MY_PAT }}
           INPUT_STORE_PASS: ${{ inputs.keystore_password }}
@@ -54,6 +57,7 @@ jobs:
           
           if echo "$EXISTING_SECRETS" | grep -q "KEYSTORE_BASE64"; then
             echo "Keystore secrets already exist. Skipping generation."
+            echo "secret_created=false" >> $GITHUB_OUTPUT
           else
             echo "Generating new signing keystore with custom credentials..."
             
@@ -66,14 +70,15 @@ jobs:
 
             ENCODED_KEY=$(base64 -w 0 auto-release-key.jks)
 
-            echo "Uploading generated keystore to repository secrets..."
+            echo "Uploading generated keystore to repository secrets (clean padding)..."
             
-            echo "$ENCODED_KEY" | gh secret set KEYSTORE_BASE64 --repo ${{ github.repository }}
-            echo "$INPUT_STORE_PASS" | gh secret set KEYSTORE_PASSWORD --repo ${{ github.repository }}
-            echo "$INPUT_ALIAS" | gh secret set KEY_ALIAS --repo ${{ github.repository }}
-            echo "$INPUT_KEY_PASS" | gh secret set KEY_PASSWORD --repo ${{ github.repository }}
+            echo -n "$ENCODED_KEY" | gh secret set KEYSTORE_BASE64 --repo ${{ github.repository }}
+            echo -n "$INPUT_STORE_PASS" | gh secret set KEYSTORE_PASSWORD --repo ${{ github.repository }}
+            echo -n "$INPUT_ALIAS" | gh secret set KEY_ALIAS --repo ${{ github.repository }}
+            echo -n "$INPUT_KEY_PASS" | gh secret set KEY_PASSWORD --repo ${{ github.repository }}
             
             echo "Custom secrets successfully created and saved!"
+            echo "secret_created=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Decode Keystore for Build
@@ -113,8 +118,40 @@ jobs:
             --draft=false \
             --prerelease=false
 
-      - name: Upload Backup Workflow Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: flutter-browser-next-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+      - name: Remove Input Dialogue After Successful First Run
+        if: steps.keystore_check.outputs.secret_created == 'true'
+        run: |
+          echo "First run complete! Removing input dialogue from workflow file..."
+          python3 -c '
+          path = ".github/workflows/setup_and_build.yml"
+          with open(path, "r") as f:
+              lines = f.readlines()
+
+          output = []
+          skip = False
+          for line in lines:
+              if "workflow_dispatch:" in line:
+                  output.append(line)
+                  skip = True
+                  continue
+              if skip:
+                  if line and not line.startswith(" "):
+                      skip = False
+                  elif line.strip() == "":
+                      continue
+                  else:
+                      continue
+              if not skip:
+                  output.append(line)
+
+          with open(path, "w") as f:
+              f.writelines(output)
+          print("Successfully stripped inputs block.")
+          '
+
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.MY_PAT }}@github.com/${{ github.repository }}.git
+          git add .github/workflows/setup_and_build.yml
+          git commit -m "chore: remove manual input dialogue after initial keystore generation"
+          git push
