@@ -1,0 +1,81 @@
+name: Setup Keystore and Build Android TV APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Generate Keystore & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK
+        uses: setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Check and Auto-Generate Keystore Secrets
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          # Check if KEYSTORE_BASE64 secret already exists in the repo
+          EXISTING_SECRETS=$(gh secret list --repo ${{ github.repository }} --json name --jq '.[].name')
+          
+          if echo "$EXISTING_SECRETS" | grep -q "KEYSTORE_BASE64"; then
+            echo "Keystore secrets already exist. Skipping generation."
+          else
+            echo "Generating new signing keystore..."
+            
+            # Generate a temporary keystore locally in the runner
+            keytool -genkey -v -keystore auto-release-key.jks \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias browser-alias \
+              -storepass "auto_store_password_123" \
+              -keypass "auto_key_password_123" \
+              -dname "CN=Flutter Browser Next, O=OpenSource, C=US"
+
+            # Base64 encode it
+            ENCODED_KEY=$(base64 -w 0 auto-release-key.jks)
+
+            echo "Uploading generated keystore to repository secrets..."
+            
+            # Use GitHub CLI to securely set the repository secrets
+            echo "$ENCODED_KEY" | gh secret set KEYSTORE_BASE64 --repo ${{ github.repository }}
+            echo "auto_store_password_123" | gh secret set KEYSTORE_PASSWORD --repo ${{ github.repository }}
+            echo "browser-alias" | gh secret set KEY_ALIAS --repo ${{ github.repository }}
+            echo "auto_key_password_123" | gh secret set KEY_PASSWORD --repo ${{ github.repository }}
+            
+            echo "Secrets successfully created and saved!"
+          fi
+
+      - name: Decode Keystore for Build
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release-key.jks
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Release APK
+        env:
+          KEYSTORE_FILE: "release-key.jks"
+          KEYSTORE_PASSWORD: "${{ secrets.KEYSTORE_PASSWORD }}"
+          KEY_ALIAS: "${{ secrets.KEY_ALIAS }}"
+          KEY_PASSWORD: "${{ secrets.KEY_PASSWORD }}"
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-browser-next-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
