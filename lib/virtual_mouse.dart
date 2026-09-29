@@ -59,7 +59,7 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
                    event.logicalKey == LogicalKeyboardKey.enter ||
                    event.logicalKey == LogicalKeyboardKey.space) {
           
-          // Simulate a mouse click in the WebView at the current cursor coordinates
+          // Simulate a mouse click and ensure input fields capture Bluetooth keyboard strokes
           widget.controller.runJavaScript('''
             (function() {
               var x = $_x;
@@ -69,15 +69,18 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
                 element.focus();
                 element.click();
                 
-                // Dispatch explicit mouse event for deep compatibility with web frameworks
-                var clickEvent = new MouseEvent('click', {
-                  view: window,
-                  bubbles: true,
-                  cancelable: true,
-                  clientX: x,
-                  clientY: y
-                });
-                element.dispatchEvent(clickEvent);
+                // If it's a form input or text area, force focus state for hardware keyboards
+                if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable) {
+                  element.focus();
+                  var clickEvent = new MouseEvent('click', {
+                    view: window,
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: x,
+                    clientY: y
+                  });
+                  element.dispatchEvent(clickEvent);
+                }
               }
             })();
           ''');
