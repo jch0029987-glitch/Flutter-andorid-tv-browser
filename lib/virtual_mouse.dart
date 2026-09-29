@@ -5,11 +5,13 @@ import 'package:webview_flutter/webview_flutter.dart';
 class VirtualMouseOverlay extends StatefulWidget {
   final WebViewController controller;
   final Widget child;
+  final VoidCallback onToggleToolbar; // Called when Escape is pressed
 
   const VirtualMouseOverlay({
     super.key,
     required this.controller,
     required this.child,
+    required this.onToggleToolbar,
   });
 
   @override
@@ -19,11 +21,8 @@ class VirtualMouseOverlay extends StatefulWidget {
 class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
   final FocusNode _focusNode = FocusNode();
   
-  // Cursor position coordinates
   double _x = 400.0;
   double _y = 300.0;
-  
-  // Movement speed multiplier per D-pad click
   static const double _step = 15.0;
   bool _isCursorVisible = true;
 
@@ -41,11 +40,38 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
     super.dispose();
   }
 
+  // Public method so parent can force focus back to the mouse overlay
+  void focusOverlay() {
+    if (mounted) {
+      FocusScope.of(context).requestFocus(_focusNode);
+      setState(() {
+        _isCursorVisible = true;
+      });
+    }
+  }
+
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent || event is KeyRepeatEvent) {
       final key = event.logicalKey;
 
-      // Only intercept D-pad and selection keys for the virtual mouse
+      // ESCAPE KEY: Jumps focus up to the URL toolbar
+      if (key == LogicalKeyboardKey.escape) {
+        widget.onToggleToolbar();
+        return KeyEventResult.handled;
+      }
+
+      // FAILSAFE: F1 key resets cursor position and screen focus instantly
+      if (key == LogicalKeyboardKey.f1) {
+        setState(() {
+          _isCursorVisible = true;
+          _x = 400.0;
+          _y = 300.0;
+        });
+        FocusScope.of(context).requestFocus(_focusNode);
+        return KeyEventResult.handled;
+      }
+
+      // D-pad movement and selection handling
       if (key == LogicalKeyboardKey.arrowUp ||
           key == LogicalKeyboardKey.arrowDown ||
           key == LogicalKeyboardKey.arrowLeft ||
@@ -76,30 +102,28 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
                 var y = $_y;
                 var element = document.elementFromPoint(x, y);
                 if (element) {
-                  element.focus();
-                  element.click();
-                  
+                  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  ['mousedown', 'mouseup', 'click', 'focus', 'focusin'].forEach(function(eventType) {
+                    var ev = new MouseEvent(eventType, {
+                      view: window, bubbles: true, cancelable: true, clientX: x, clientY: y
+                    });
+                    element.dispatchEvent(ev);
+                  });
                   if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable) {
                     element.focus();
-                    var clickEvent = new MouseEvent('click', {
-                      view: window,
-                      bubbles: true,
-                      cancelable: true,
-                      clientX: x,
-                      clientY: y
-                    });
-                    element.dispatchEvent(clickEvent);
+                    var inputEvent = new Event('input', { bubbles: true });
+                    element.dispatchEvent(inputEvent);
                   }
                 }
               })();
             ''');
           }
         });
-        return KeyEventResult.handled; // Handled as a mouse movement/click
+        return KeyEventResult.handled;
       }
     }
 
-    // CRITICAL: Let regular typing keys (letters, numbers, backspace) pass through to text fields!
+    // Let regular typing keys (letters, numbers, backspace) pass through to inputs
     return KeyEventResult.ignored;
   }
 
@@ -109,15 +133,10 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
       focusNode: _focusNode,
       onKeyEvent: _handleKeyEvent,
       child: GestureDetector(
-        onTap: () {
-          FocusScope.of(context).requestFocus(_focusNode);
-        },
+        onTap: () => FocusScope.of(context).requestFocus(_focusNode),
         child: Stack(
           children: [
-            // The underlying web view content
             widget.child,
-
-            // Virtual Mouse Cursor Overlay
             if (_isCursorVisible)
               Positioned(
                 left: _x,
@@ -131,11 +150,7 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                       boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black45,
-                          blurRadius: 6,
-                          spreadRadius: 2,
-                        ),
+                        BoxShadow(color: Colors.black45, blurRadius: 6, spreadRadius: 2),
                       ],
                     ),
                   ),
