@@ -83,13 +83,13 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
-      - name: Build Release APK
+      - name: Build Release APK (armeabi-v7a optimized)
         env:
           KEYSTORE_FILE: "release-key.jks"
           KEYSTORE_PASSWORD: "${{ env.BUILD_STORE_PASSWORD }}"
           KEY_ALIAS: "${{ env.BUILD_KEY_ALIAS }}"
           KEY_PASSWORD: "${{ env.BUILD_KEY_PASSWORD }}"
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm
 
       - name: Create GitHub Release and Upload APK Asset
         env:
@@ -98,11 +98,18 @@ jobs:
           TAG="v${{ steps.extract_version.outputs.version }}"
           APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
           
+          # Check if release already exists to prevent crash
+          if gh release view "$TAG" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "Release $TAG already exists. Deleting existing release & tag to overwrite..."
+            gh release delete "$TAG" --repo ${{ github.repository }} --yes || true
+            git push origin --delete "$TAG" || true
+          fi
+
           echo "Creating GitHub Release for tag $TAG..."
           gh release create "$TAG" "$APK_PATH" \
             --repo ${{ github.repository }} \
             --title "Flutter Browser Next $TAG" \
-            --notes "Automated Android TV release for version $TAG." \
+            --notes "Automated Android TV release (armeabi-v7a optimized) for version $TAG." \
             --draft=false \
             --prerelease=false
 
@@ -119,6 +126,14 @@ jobs:
           skip = False
           for line in lines:
               if "workflow_dispatch:" in line:
+                  output.append(line)
+                  # Keep workflow_dispatch without inputs block
+                  skip = True
+                  continue
+              if skip and "jobs:" in line:
+                  skip = False
+              if not skip:
+                  output.append(line)
 
           with open(path, "w") as f:
               f.writelines(output)
