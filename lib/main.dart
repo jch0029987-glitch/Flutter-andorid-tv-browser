@@ -83,29 +83,98 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoForward = forward;
             });
 
-            // EXTREME META INPUT BRIDGE: Force typing into React forms on Facebook
+            // REACT CDN INJECTION & QUICK-FILL BRIDGE FOR META
             if (url.contains('facebook.com')) {
               _controller.runJavaScript('''
                 (function() {
-                  if (window._metaBridgeInitialized) return;
-                  window._metaBridgeInitialized = true;
+                  if (window._reactInjected) return;
+                  window._reactInjected = true;
 
-                  document.addEventListener('keydown', function(e) {
-                    var active = document.activeElement;
-                    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-                      var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                      if (e.key.length === 1) {
-                        nativeInputValueSetter.call(active, active.value + e.key);
-                        active.dispatchEvent(new Event('input', { bubbles: true }));
-                        active.dispatchEvent(new Event('change', { bubbles: true }));
-                      } else if (e.key === 'Backspace') {
-                        nativeInputValueSetter.call(active, active.value.slice(0, -1));
-                        active.dispatchEvent(new Event('input', { bubbles: true }));
-                        active.dispatchEvent(new Event('change', { bubbles: true }));
-                      }
+                  // 1. Load React CDN
+                  var reactScript = document.createElement('script');
+                  reactScript.src = 'https://unpkg.com/react@18/umd/react.production.min.js';
+                  
+                  reactScript.onload = function() {
+                    var domScript = document.createElement('script');
+                    domScript.src = 'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js';
+                    domScript.onload = function() { mountReactOverlay(); };
+                    document.head.appendChild(domScript);
+                  };
+                  document.head.appendChild(reactScript);
+
+                  // 2. Mount React TV Helper Component
+                  function mountReactOverlay() {
+                    var container = document.createElement('div');
+                    container.id = 'tv-react-helper-root';
+                    container.style.position = 'fixed';
+                    container.style.bottom = '20px';
+                    container.style.right = '20px';
+                    container.style.zIndex = '999999';
+                    document.body.appendChild(container);
+
+                    function TVLoginHelper() {
+                      const [status, setStatus] = React.useState('Ready');
+                      
+                      React.useEffect(() => {
+                        window._updateTvCredentials = (u, p) => {
+                          setStatus('Credentials Loaded');
+                        };
+                      }, []);
+
+                      const fillInput = (selector, value) => {
+                        var field = document.querySelector(selector);
+                        if (!field) {
+                          setStatus('Field not found: ' + selector);
+                          return;
+                        }
+
+                        field.focus();
+                        var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                        nativeSetter.call(field, value);
+
+                        if (field._valueTracker) {
+                          field._valueTracker.setValue(value);
+                        }
+
+                        var inputEvent = new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value });
+                        field.dispatchEvent(inputEvent);
+                        field.dispatchEvent(new Event('change', { bubbles: true }));
+                        setStatus('Filled successfully');
+                      };
+
+                      return React.createElement('div', {
+                        style: {
+                          background: 'rgba(20, 20, 20, 0.95)',
+                          color: '#00ffcc',
+                          padding: '16px',
+                          borderRadius: '12px',
+                          fontFamily: 'sans-serif',
+                          fontSize: '13px',
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+                          border: '1px solid #00ffcc',
+                          width: '240px'
+                        }
+                      }, [
+                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' } }, '📺 TV React Helper'),
+                        React.createElement('div', { key: 'status', style: { color: '#ffffff', fontSize: '11px', marginBottom: '10px' } }, 'Status: ' + status),
+                        
+                        React.createElement('button', {
+                          key: 'btn-email',
+                          onClick: () => fillInput('#email', window._tvUser || ''),
+                          style: { width: '100%', padding: '8px', marginBottom: '6px', background: '#1877f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
+                        }, '⚡ Fill Email/Phone'),
+
+                        React.createElement('button', {
+                          key: 'btn-pass',
+                          onClick: () => fillInput('#pass', window._tvPass || ''),
+                          style: { width: '100%', padding: '8px', background: '#d93838', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
+                        }, '⚡ Fill Password')
+                      ]);
                     }
-                  }, true);
-                  console.log("Extreme Meta Input Bridge Initialized.");
+
+                    const root = ReactDOM.createRoot(container);
+                    root.render(React.createElement(TVLoginHelper));
+                  }
                 })();
               ''');
             }
@@ -145,6 +214,64 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         content: Text(_isDesktopMode ? "Switched to Desktop Mode" : "Switched to Mobile Mode"),
         duration: const Duration(seconds: 1),
       ),
+    );
+  }
+
+  // Secure In-App Credentials Dialog for TV
+  void _showCredentialsDialog() {
+    final TextEditingController userController = TextEditingController();
+    final TextEditingController passController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('🔐 Set Meta Credentials'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: userController,
+              decoration: const InputDecoration(labelText: 'Email or Phone'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: passController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _injectCredentialsIntoReact(userController.text, passController.text);
+            },
+            child: const Text('Save & Inject'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _injectCredentialsIntoReact(String username, String password) {
+    final safeUser = username.replaceAll("'", "\\'");
+    final safePass = password.replaceAll("'", "\\'");
+
+    _controller.runJavaScript('''
+      window._tvUser = '$safeUser';
+      window._tvPass = '$safePass';
+      if (window._updateTvCredentials) {
+        window._updateTvCredentials('$safeUser', '$safePass');
+      }
+    ''');
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Credentials loaded into React helper!'), duration: Duration(seconds: 2)),
     );
   }
 
@@ -191,14 +318,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       }
     }
     _controller.loadRequest(Uri.parse(formattedUrl));
-    
-    // Return focus back to the virtual mouse overlay after loading
     _mouseOverlayKey.currentState?.focusOverlay();
   }
 
   @override
   Widget build(BuildContext context) {
-    // PopScope handles Android TV remote Back button behavior safely
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
@@ -214,7 +338,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       },
       child: Scaffold(
         body: Focus(
-          // Shortcut listener (e.g. Menu button or F2 to focus the URL bar)
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent) {
               if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
@@ -254,12 +377,18 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       tooltip: 'Home',
                     ),
                     const SizedBox(width: 4),
-                    // Desktop / Mobile Mode Toggle Button
                     IconButton(
                       focusColor: Colors.blueAccent,
                       icon: Icon(_isDesktopMode ? Icons.desktop_windows : Icons.phone_android),
                       onPressed: _toggleDesktopMode,
                       tooltip: _isDesktopMode ? 'Switch to Mobile View' : 'Switch to Desktop View',
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      focusColor: Colors.blueAccent,
+                      icon: const Icon(Icons.vpn_key),
+                      onPressed: _showCredentialsDialog,
+                      tooltip: 'Set Login Credentials',
                     ),
                     const SizedBox(width: 12),
                     // URL / Search Input wrapped in Focus to catch Escape key
