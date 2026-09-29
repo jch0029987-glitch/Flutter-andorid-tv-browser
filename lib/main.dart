@@ -39,10 +39,13 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocusNode = FocusNode();
   
-  final String _homeUrl = 'https://www.google.com';
+  // Key to control the virtual mouse overlay focus externally
+  final GlobalKey<VirtualMouseOverlayState> _mouseOverlayKey = GlobalKey<VirtualMouseOverlayState>();
+  
+  final String _homeUrl = 'https://www.facebook.com/login';
   bool _canGoBack = false;
   bool _canGoForward = false;
-  String _currentUrl = 'https://www.google.com';
+  String _currentUrl = 'https://www.facebook.com/login';
   
   // User Agent Mode State
   bool _isDesktopMode = true;
@@ -79,6 +82,33 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoBack = back;
               _canGoForward = forward;
             });
+
+            // EXTREME META INPUT BRIDGE: Force typing into React forms on Facebook
+            if (url.contains('facebook.com')) {
+              _controller.runJavaScript('''
+                (function() {
+                  if (window._metaBridgeInitialized) return;
+                  window._metaBridgeInitialized = true;
+
+                  document.addEventListener('keydown', function(e) {
+                    var active = document.activeElement;
+                    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+                      var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                      if (e.key.length === 1) {
+                        nativeInputValueSetter.call(active, active.value + e.key);
+                        active.dispatchEvent(new Event('input', { bubbles: true }));
+                        active.dispatchEvent(new Event('change', { bubbles: true }));
+                      } else if (e.key === 'Backspace') {
+                        nativeInputValueSetter.call(active, active.value.slice(0, -1));
+                        active.dispatchEvent(new Event('input', { bubbles: true }));
+                        active.dispatchEvent(new Event('change', { bubbles: true }));
+                      }
+                    }
+                  }, true);
+                  console.log("Extreme Meta Input Bridge Initialized.");
+                })();
+              ''');
+            }
           },
           onWebResourceError: (WebResourceError error) {
             debugPrint('WebView Error: ${error.description}');
@@ -116,6 +146,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         duration: const Duration(seconds: 1),
       ),
     );
+  }
+
+  // Jump focus to URL toolbar when Escape is pressed on the webpage
+  void _jumpToToolbar() {
+    FocusScope.of(context).requestFocus(_urlFocusNode);
   }
 
   // Domain filter for the lightweight built-in ad blocker
@@ -156,7 +191,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       }
     }
     _controller.loadRequest(Uri.parse(formattedUrl));
-    FocusScope.of(context).unfocus();
+    
+    // Return focus back to the virtual mouse overlay after loading
+    _mouseOverlayKey.currentState?.focusOverlay();
   }
 
   @override
@@ -177,12 +214,12 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       },
       child: Scaffold(
         body: Focus(
-          // Shortcut listener (e.g. Menu button on remote to focus the URL bar)
+          // Shortcut listener (e.g. Menu button or F2 to focus the URL bar)
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent) {
               if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
                   event.logicalKey == LogicalKeyboardKey.f2) {
-                _urlFocusNode.requestFocus();
+                _jumpToToolbar();
                 return KeyEventResult.handled;
               }
             }
@@ -225,7 +262,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       tooltip: _isDesktopMode ? 'Switch to Mobile View' : 'Switch to Desktop View',
                     ),
                     const SizedBox(width: 12),
-                    // URL / Search Input
+                    // URL / Search Input with Escape Key Handler
                     Expanded(
                       child: TextField(
                         controller: _urlController,
@@ -243,6 +280,14 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
                         ),
                         onSubmitted: (value) => _loadUrl(value),
+                        onKeyEvent: (node, event) {
+                          // Pressing Escape while in the URL bar jumps focus back down to the webpage
+                          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+                            _mouseOverlayKey.currentState?.focusOverlay();
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
                       ),
                     ),
                   ],
@@ -252,7 +297,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               // Core Web Engine wrapped inside the Virtual Mouse Overlay
               Expanded(
                 child: VirtualMouseOverlay(
+                  key: _mouseOverlayKey,
                   controller: _controller,
+                  onToggleToolbar: _jumpToToolbar,
                   child: WebViewWidget(controller: _controller),
                 ),
               ),
