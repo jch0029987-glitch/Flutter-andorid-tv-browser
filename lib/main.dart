@@ -262,32 +262,33 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       tooltip: _isDesktopMode ? 'Switch to Mobile View' : 'Switch to Desktop View',
                     ),
                     const SizedBox(width: 12),
-                    // URL / Search Input with Escape Key Handler
+                    // URL / Search Input wrapped in Focus to catch Escape key
                     Expanded(
-                      child: TextField(
-                        controller: _urlController,
-                        focusNode: _urlFocusNode,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          hintText: 'Search or enter address...',
-                          hintStyle: TextStyle(color: Colors.grey[400]),
-                          filled: true,
-                          fillColor: Colors.grey[800],
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                            borderSide: BorderSide.none,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        ),
-                        onSubmitted: (value) => _loadUrl(value),
+                      child: Focus(
                         onKeyEvent: (node, event) {
-                          // Pressing Escape while in the URL bar jumps focus back down to the webpage
                           if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
                             _mouseOverlayKey.currentState?.focusOverlay();
                             return KeyEventResult.handled;
                           }
                           return KeyEventResult.ignored;
                         },
+                        child: TextField(
+                          controller: _urlController,
+                          focusNode: _urlFocusNode,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            hintText: 'Search or enter address...',
+                            hintStyle: TextStyle(color: Colors.grey[400]),
+                            filled: true,
+                            fillColor: Colors.grey[800],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8.0),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          ),
+                          onSubmitted: (value) => _loadUrl(value),
+                        ),
                       ),
                     ),
                   ],
