@@ -15,10 +15,11 @@ class VirtualMouseOverlay extends StatefulWidget {
   });
 
   @override
-  State<VirtualMouseOverlay> createState() => _VirtualMouseOverlayState();
+  State<VirtualMouseOverlay> createState() => VirtualMouseOverlayState();
 }
 
-class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
+// Class name made public so GlobalKey<VirtualMouseOverlayState> works in main.dart
+class VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
   final FocusNode _focusNode = FocusNode();
   
   double _x = 400.0;
