@@ -41,62 +41,73 @@ class _VirtualMouseOverlayState extends State<VirtualMouseOverlay> {
     super.dispose();
   }
 
-  void _handleKeyEvent(KeyEvent event) {
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent || event is KeyRepeatEvent) {
-      setState(() {
-        _isCursorVisible = true;
-        final size = MediaQuery.of(context).size;
+      final key = event.logicalKey;
 
-        if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-          _y = (_y - _step).clamp(0.0, size.height - 50);
-        } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-          _y = (_y + _step).clamp(0.0, size.height - 50);
-        } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-          _x = (_x - _step).clamp(0.0, size.width - 50);
-        } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-          _x = (_x + _step).clamp(0.0, size.width - 50);
-        } else if (event.logicalKey == LogicalKeyboardKey.select ||
-                   event.logicalKey == LogicalKeyboardKey.enter ||
-                   event.logicalKey == LogicalKeyboardKey.space) {
-          
-          // Simulate a mouse click and ensure input fields capture Bluetooth keyboard strokes
-          widget.controller.runJavaScript('''
-            (function() {
-              var x = $_x;
-              var y = $_y;
-              var element = document.elementFromPoint(x, y);
-              if (element) {
-                element.focus();
-                element.click();
-                
-                // If it's a form input or text area, force focus state for hardware keyboards
-                if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable) {
+      // Only intercept D-pad and selection keys for the virtual mouse
+      if (key == LogicalKeyboardKey.arrowUp ||
+          key == LogicalKeyboardKey.arrowDown ||
+          key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowRight ||
+          key == LogicalKeyboardKey.select ||
+          key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.space) {
+        
+        setState(() {
+          _isCursorVisible = true;
+          final size = MediaQuery.of(context).size;
+
+          if (key == LogicalKeyboardKey.arrowUp) {
+            _y = (_y - _step).clamp(0.0, size.height - 50);
+          } else if (key == LogicalKeyboardKey.arrowDown) {
+            _y = (_y + _step).clamp(0.0, size.height - 50);
+          } else if (key == LogicalKeyboardKey.arrowLeft) {
+            _x = (_x - _step).clamp(0.0, size.width - 50);
+          } else if (key == LogicalKeyboardKey.arrowRight) {
+            _x = (_x + _step).clamp(0.0, size.width - 50);
+          } else if (key == LogicalKeyboardKey.select ||
+                     key == LogicalKeyboardKey.enter ||
+                     key == LogicalKeyboardKey.space) {
+            
+            widget.controller.runJavaScript('''
+              (function() {
+                var x = $_x;
+                var y = $_y;
+                var element = document.elementFromPoint(x, y);
+                if (element) {
                   element.focus();
-                  var clickEvent = new MouseEvent('click', {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: x,
-                    clientY: y
-                  });
-                  element.dispatchEvent(clickEvent);
+                  element.click();
+                  
+                  if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable) {
+                    element.focus();
+                    var clickEvent = new MouseEvent('click', {
+                      view: window,
+                      bubbles: true,
+                      cancelable: true,
+                      clientX: x,
+                      clientY: y
+                    });
+                    element.dispatchEvent(clickEvent);
+                  }
                 }
-              }
-            })();
-          ''');
-        }
-      });
+              })();
+            ''');
+          }
+        });
+        return KeyEventResult.handled; // Handled as a mouse movement/click
+      }
     }
+
+    // CRITICAL: Let regular typing keys (letters, numbers, backspace) pass through to text fields!
+    return KeyEventResult.ignored;
   }
 
   @override
   Widget build(BuildContext context) {
     return Focus(
       focusNode: _focusNode,
-      onKeyEvent: (node, event) {
-        _handleKeyEvent(event);
-        return KeyEventResult.handled;
-      },
+      onKeyEvent: _handleKeyEvent,
       child: GestureDetector(
         onTap: () {
           FocusScope.of(context).requestFocus(_focusNode);
