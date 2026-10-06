@@ -280,11 +280,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                 ),
                 const SizedBox(height: 20),
 
-                // Option 1: Sync with Phone (WebSocket)
+                // Option 1: Sync with Phone (WebSocket Server)
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    autofocus: true, // Automatically focused for TV remote D-pad!
+                    autofocus: true,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueAccent,
                       foregroundColor: Colors.white,
@@ -394,6 +394,16 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
             ),
             const SizedBox(height: 12),
             const Text('Waiting for phone connection...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 20),
+            // Optional helper button if testing on the phone itself
+            OutlinedButton.icon(
+              icon: const Icon(Icons.send),
+              label: const Text('Simulate Push from Phone'),
+              onPressed: () {
+                Navigator.pop(context);
+                _showPushDialog(context);
+              },
+            ),
           ],
         ),
         actions: [
@@ -407,6 +417,98 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ],
       ),
     );
+  }
+
+  // --- Phone-Side Push Dialog with Smart URL Cleaner ---
+  void _showPushDialog(BuildContext context) {
+    final TextEditingController ipController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('🚀 Push Session to TV'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Enter the address shown on your Android TV:'),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ipController,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                hintText: '192.168.1.50:8080 (or ws://...)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context), 
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              String input = ipController.text.trim();
+              Navigator.pop(context);
+
+              // --- SMART URL CLEANER ---
+              // Automatically strips out accidental mobile keyboard prefixes
+              input = input.replaceAll('https://', '');
+              input = input.replaceAll('http://', '');
+              input = input.replaceAll('wss://', '');
+              input = input.replaceAll('ws://', '');
+              
+              if (input.endsWith('/')) {
+                input = input.substring(0, input.length - 1);
+              }
+
+              String finalWsUrl = 'ws://$input';
+              await _sendCookiesOverWebSocket(finalWsUrl);
+            },
+            child: const Text('Connect & Sync'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _sendCookiesOverWebSocket(String wsUrl) async {
+    try {
+      // 1. Grab current cookies from WebView JavaScript context
+      final cookiesString = await _controller.runJavaScriptReturningResult('document.cookie');
+      String cleanCookies = cookiesString.toString();
+      
+      // Strip potential wrapping quotes from JS evaluation output
+      if (cleanCookies.startsWith('"') && cleanCookies.endsWith('"')) {
+        cleanCookies = cleanCookies.substring(1, cleanCookies.length - 1);
+      }
+
+      if (cleanCookies.isEmpty || cleanCookies == 'null') {
+        _showToast('⚠️ No active cookies found to push');
+        return;
+      }
+
+      // 2. Open WebSocket channel to TV
+      final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      
+      // Send the cookie payload
+      channel.sink.add(cleanCookies);
+      _showToast('📤 Pushing session to TV...');
+
+      // Listen for acknowledgement
+      channel.stream.listen((message) {
+        if (message.toString() == 'SUCCESS') {
+          _showToast('✅ Successfully pushed to TV!');
+          channel.sink.close();
+        }
+      }, onError: (error) {
+        _showToast('❌ Sync connection error');
+        debugPrint('WS Error: $error');
+      });
+    } catch (e) {
+      debugPrint('Error sending cookies: $e');
+      _showToast('❌ Failed to connect to TV address');
+    }
   }
 
   Future<void> _injectCookieStringDirectly(String rawCookies) async {
@@ -491,7 +593,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
           _controller.loadRequest(Uri.parse(_homeUrl));
         } else {
-          _showToast('⚠️️ No valid cookies found in JSON');
+          _showToast('⚠️ No valid cookies found in JSON');
           _controller.loadRequest(Uri.parse(_homeUrl));
         }
       } else {
