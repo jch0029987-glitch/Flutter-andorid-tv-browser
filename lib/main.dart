@@ -419,7 +419,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     );
   }
 
-  // --- Phone-Side Push Dialog with Smart URL Cleaner ---
+  // --- Phone-Side Push Dialog with ws:// Support ---
   void _showPushDialog(BuildContext context) {
     final TextEditingController ipController = TextEditingController();
 
@@ -436,7 +436,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               controller: ipController,
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(
-                hintText: '192.168.1.50:8080 (or ws://...)',
+                hintText: 'ws://192.168.1.50:8080',
               ),
             ),
           ],
@@ -451,18 +451,22 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               String input = ipController.text.trim();
               Navigator.pop(context);
 
-              // --- SMART URL CLEANER ---
-              // Automatically strips out accidental mobile keyboard prefixes
+              // Strip invalid HTTP protocols if phone keyboard forced them
               input = input.replaceAll('https://', '');
               input = input.replaceAll('http://', '');
-              input = input.replaceAll('wss://', '');
-              input = input.replaceAll('ws://', '');
               
               if (input.endsWith('/')) {
                 input = input.substring(0, input.length - 1);
               }
 
-              String finalWsUrl = 'ws://$input';
+              // Preserve ws:// or wss:// if provided, otherwise default to ws://
+              String finalWsUrl;
+              if (input.startsWith('ws://') || input.startsWith('wss://')) {
+                finalWsUrl = input;
+              } else {
+                finalWsUrl = 'ws://$input';
+              }
+
               await _sendCookiesOverWebSocket(finalWsUrl);
             },
             child: const Text('Connect & Sync'),
@@ -484,7 +488,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       }
 
       if (cleanCookies.isEmpty || cleanCookies == 'null') {
-        _showToast('⚠️ No active cookies found to push');
+        _showToast('⚠️️ No active cookies found to push');
         return;
       }
 
@@ -593,7 +597,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
           _controller.loadRequest(Uri.parse(_homeUrl));
         } else {
-          _showToast('⚠️ No valid cookies found in JSON');
+          _showToast('⚠️️ No valid cookies found in JSON');
           _controller.loadRequest(Uri.parse(_homeUrl));
         }
       } else {
