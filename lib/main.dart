@@ -794,6 +794,7 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
   HttpServer? _server;
   String _wsAddress = 'Initializing network...';
   bool _isConnected = false;
+  bool _hasError = false;
 
   @override
   void initState() {
@@ -803,16 +804,26 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
 
   Future<void> _startServer() async {
     try {
+      await Permission.location.request();
+
       final info = NetworkInfo();
-      String? ip = await info.getWifiIP();
-      ip ??= '192.168.1.x';
+      String? ip;
+      try {
+        ip = await info.getWifiIP();
+      } catch (e) {
+        debugPrint('NetworkInfo error: $e');
+      }
+
+      ip ??= '192.168.1.100';
       const int port = 8080;
       _wsAddress = 'ws://$ip:$port';
 
       var handler = webSocketHandler((WebSocketChannel webSocket) {
-        setState(() {
-          _isConnected = true;
-        });
+        if (mounted) {
+          setState(() {
+            _isConnected = true;
+          });
+        }
         webSocket.stream.listen((message) async {
           try {
             widget.onSynced(message.toString());
@@ -826,12 +837,17 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
       });
 
       _server = await shelf_io.serve(handler, '0.0.0.0', port);
-      setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
       debugPrint('Failed to start server: $e');
-      setState(() {
-        _wsAddress = 'Error starting local server';
-      });
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _wsAddress = 'Server Error: $e';
+        });
+      }
     }
   }
 
@@ -852,48 +868,61 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text(
-                'Scan this QR code with your phone app to sync session:',
-                style: TextStyle(fontSize: 18, color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
+          child: _hasError
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
+                    const SizedBox(height: 16),
+                    Text(
+                      _wsAddress,
+                      style: const TextStyle(fontSize: 16, color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                )
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      'Scan this QR code with your phone app to sync session:',
+                      style: TextStyle(fontSize: 18, color: Colors.white70),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: SizedBox(
+                        width: 220,
+                        height: 220,
+                        child: QrImageView(
+                          data: _wsAddress,
+                          version: QrVersions.auto,
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SelectableText(
+                      _wsAddress, 
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _isConnected ? '✅ Connected! Processing sync...' : '⏳ Waiting for incoming phone connection...',
+                      style: TextStyle(
+                        fontSize: 15, 
+                        color: _isConnected ? Colors.greenAccent : Colors.orangeAccent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ),
-                child: SizedBox(
-                  width: 220,
-                  height: 220,
-                  child: QrImageView(
-                    data: _wsAddress,
-                    version: QrVersions.auto,
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SelectableText(
-                _wsAddress, 
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _isConnected ? '✅ Connected! Processing sync...' : '⏳ Waiting for incoming phone connection...',
-                style: TextStyle(
-                  fontSize: 15, 
-                  color: _isConnected ? Colors.greenAccent : Colors.orangeAccent,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -903,7 +932,7 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
 // =========================================================================
 // Dedicated Full-Screen Phone Scanner Screen (Camera QR Code Reader)
 // =========================================================================
-class PhonePairingScreen extends StatelessWidget {
+class PhonePairingScreen extends StatefulWidget {
   final WebViewController webController;
   final Function(String) showToast;
 
@@ -914,31 +943,96 @@ class PhonePairingScreen extends StatelessWidget {
   });
 
   @override
+  State<PhonePairingScreen> createState() => _PhonePairingScreenState();
+}
+
+class _PhonePairingScreenState extends State<PhonePairingScreen> {
+  bool _hasPermission = false;
+  bool _hasScanned = false;
+  late final MobileScannerController _scannerController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scannerController = MobileScannerController();
+    _checkCameraPermission();
+  }
+
+  Future<void> _checkCameraPermission() async {
+    final status = await Permission.camera.request();
+    setState(() {
+      _hasPermission = status.isGranted;
+    });
+    if (!status.isGranted) {
+      widget.showToast('⚠️ Camera permission is required to scan QR codes');
+    }
+  }
+
+  @override
+  void dispose() {
+    _scannerController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Scan TV QR Code'),
         backgroundColor: Colors.black,
       ),
-      body: MobileScanner(
-        onDetect: (capture) {
-          final List<Barcode> barcodes = capture.barcodes;
-          for (final barcode in barcodes) {
-            final String? rawValue = barcode.rawValue;
-            if (rawValue != null && (rawValue.startsWith('ws://') || rawValue.startsWith('wss://'))) {
-              Navigator.pop(context);
-              _sendCookiesOverWebSocket(rawValue);
-              return;
-            }
-          }
-        },
-      ),
+      body: _hasPermission
+          ? MobileScanner(
+              controller: _scannerController,
+              onDetect: (capture) async {
+                if (_hasScanned) return;
+                
+                final List<Barcode> barcodes = capture.barcodes;
+                for (final barcode in barcodes) {
+                  final String? rawValue = barcode.rawValue;
+                  if (rawValue != null && (rawValue.startsWith('ws://') || rawValue.startsWith('wss://'))) {
+                    _hasScanned = true;
+                    await _scannerController.stop();
+                    
+                    if (mounted) {
+                      Navigator.pop(context);
+                    }
+                    
+                    _sendCookiesOverWebSocket(rawValue);
+                    return;
+                  }
+                }
+              },
+            )
+          : Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.camera_alt, size: 64, color: Colors.grey),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Camera permission is needed to scan the QR code.',
+                      style: TextStyle(color: Colors.white70, fontSize: 16),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                      onPressed: _checkCameraPermission,
+                      child: const Text('Grant Permission'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
     );
   }
 
   Future<void> _sendCookiesOverWebSocket(String wsUrl) async {
     try {
-      final cookiesString = await webController.runJavaScriptReturningResult('document.cookie');
+      final cookiesString = await widget.webController.runJavaScriptReturningResult('document.cookie');
       String cleanCookies = cookiesString.toString();
       
       if (cleanCookies.startsWith('"') && cleanCookies.endsWith('"')) {
@@ -946,26 +1040,26 @@ class PhonePairingScreen extends StatelessWidget {
       }
 
       if (cleanCookies.isEmpty || cleanCookies == 'null') {
-        showToast('⚠ No active cookies found to push');
+        widget.showToast('⚠ No active cookies found to push');
         return;
       }
 
       final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       channel.sink.add(cleanCookies);
-      showToast('📤 Pushing session to TV...');
+      widget.showToast('📤 Pushing session to TV...');
 
       channel.stream.listen((message) {
         if (message.toString() == 'SUCCESS') {
-          showToast('✅ Successfully pushed to TV!');
+          widget.showToast('✅ Successfully pushed to TV!');
           channel.sink.close();
         }
       }, onError: (error) {
-        showToast('❌ Sync connection error');
+        widget.showToast('❌ Sync connection error');
         debugPrint('WS Error: $error');
       });
     } catch (e) {
       debugPrint('Error sending cookies: $e');
-      showToast('❌ Failed to connect to TV address');
+      widget.showToast('❌ Failed to connect to TV address');
     }
   }
 }
