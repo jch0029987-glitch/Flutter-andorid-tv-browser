@@ -1,19 +1,22 @@
-name: Initialize Mobile & TV Android Browser Structure
+name: Build Signed Mobile & TV APKs (ARM64 & ARMv7)
 
 on:
   workflow_dispatch:
 
 jobs:
-  scaffold:
-    name: Generate Cross-Platform Android Flutter Project
+  build-signed-apks:
+    name: Build & Sign Split APKs
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Java (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
       - name: Set up Flutter SDK (Latest Stable)
         uses: subosito/flutter-action@v2
@@ -22,22 +25,30 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Wipe Old Files (Keep .github)
+      - name: Decode Android Keystore
         run: |
-          find . -maxdepth 1 ! -name '.' ! -name '..' ! -name '.git' ! -name '.github' -exec rm -rf {} +
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore.jks
 
-      - name: Run Flutter Create (Android Target)
+      - name: Create key.properties
         run: |
-          flutter create . --org com.flutterbrowser --project-name flutter_browser_next --platforms=android
+          cat <<EOF > android/key.properties
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=keystore.jks
+          EOF
 
-      - name: Commit and Push Generated Files
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Split Release APKs (ARM64-v8a & ARMv7)
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --quiet && git diff --staged --quiet || {
-            git commit -m "chore: initialize mobile and tv android browser structure"
-            git push origin main
-          }
+          flutter build apk --release --split-per-abi
+
+      - name: Upload Signed APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-browser-apks-arm64-v7a
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
