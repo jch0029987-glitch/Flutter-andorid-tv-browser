@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'file_picker.dart'; // <--- Added File Picker package
 import 'update_service.dart';
 
 // WebSocket packages for phone-to-TV sync
@@ -21,6 +22,24 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const FlutterBrowserNextApp());
+}
+
+class BrowserExtension {
+  final String id;
+  final String name;
+  final String description;
+  String jsCode;
+  bool isEnabled;
+  final bool isAsset;
+
+  BrowserExtension({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.jsCode,
+    this.isEnabled = true,
+    required this.isAsset,
+  });
 }
 
 class FlutterBrowserNextApp extends StatelessWidget {
@@ -66,6 +85,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   double _cursorY = 300;
 
   String? _toastMessage;
+  final List<BrowserExtension> _extensions = [];
   
   static const String _desktopUserAgent = 
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -77,6 +97,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     super.initState();
     _urlController.text = _homeUrl;
     _checkIfTvDevice();
+    _loadExtensionsAndInit();
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -106,6 +127,13 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoBack = back;
               _canGoForward = forward;
             });
+
+            // Run active extensions after page finishes loading
+            for (var ext in _extensions) {
+              if (ext.isEnabled) {
+                _controller.runJavaScript(ext.jsCode);
+              }
+            }
 
             // Universal Facebook detection (works for both phone & TV in mobile/desktop modes)
             if (url.contains('facebook.com')) {
@@ -151,7 +179,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                         let field = null;
                         
                         if (type === 'email') {
-                          // Search multiple variations across mobile & desktop layouts
                           field = document.querySelector('#email') || 
                                   document.querySelector('input[name="email"]') || 
                                   document.querySelector('input[type="email"]') ||
@@ -237,6 +264,125 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       _showStartupSetupMenu(context);
       FocusScope.of(context).requestFocus(_appFocusNode);
     });
+  }
+
+  Future<void> _loadExtensionsAndInit() async {
+    try {
+      _extensions.clear();
+
+      // 1. Load Asset Extensions (bundled with project)
+      String darkModeCode = await rootBundle.loadString('assets/extensions/dark_mode.js');
+      String bannerCode = await rootBundle.loadString('assets/extensions/banner_cleaner.js');
+
+      _extensions.add(BrowserExtension(id: 'dark_mode', name: 'Force Dark Mode', description: 'Built-in asset script', jsCode: darkModeCode, isEnabled: false, isAsset: true));
+      _extensions.add(BrowserExtension(id: 'banner_cleaner', name: 'Banner Cleaner', description: 'Built-in asset script', jsCode: bannerCode, isEnabled: true, isAsset: true));
+
+      // 2. Load Local Custom File Extensions from App Directory
+      final directory = await getApplicationDocumentsDirectory();
+      final extDir = Directory('${directory.path}/extensions');
+      if (await extDir.exists()) {
+        final files = extDir.listSync();
+        for (var file in files) {
+          if (file is File && file.path.endsWith('.js')) {
+            final content = await file.readAsString();
+            final fileName = file.uri.pathSegments.last.replaceAll('.js', '');
+            _extensions.add(BrowserExtension(
+              id: file.path,
+              name: fileName,
+              description: 'Imported file script',
+              jsCode: content,
+              isEnabled: true,
+              isAsset: false,
+            ));
+          }
+        }
+      }
+      setState(() {});
+    } catch (e) {
+      debugPrint('Error loading extensions: $e');
+    }
+  }
+
+  Future<void> _importJsFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['js'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        File pickedFile = File(result.files.single.path!);
+        String fileName = result.files.single.name;
+        String fileContent = await pickedFile.readAsString();
+
+        final directory = await getApplicationDocumentsDirectory();
+        final extDir = Directory('${directory.path}/extensions');
+        if (!await extDir.exists()) await extDir.create(recursive: true);
+
+        final savedFile = File('${extDir.path}/$fileName');
+        await savedFile.writeAsString(fileContent);
+
+        await _loadExtensionsAndInit();
+        _showToast('✅ Imported extension: $fileName');
+      }
+    } catch (e) {
+      _showToast('❌ Failed to import file');
+    }
+  }
+
+  void _showExtensionsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.between,
+                children: [
+                  const Text('Extensions'),
+                  IconButton(
+                    icon: const Icon(Icons.file_upload, color: Colors.cyanAccent),
+                    tooltip: 'Import .js File',
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _importJsFile();
+                    },
+                  )
+                ],
+              ),
+              content: SizedBox(
+                width: 340,
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _extensions.length,
+                  itemBuilder: (context, index) {
+                    final ext = _extensions[index];
+                    return SwitchListTile(
+                      title: Text(ext.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                      subtitle: Text('${ext.description} (${ext.isAsset ? "Asset" : "Local"})', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                      value: ext.isEnabled,
+                      activeColor: Colors.cyanAccent,
+                      onChanged: (bool value) {
+                        setDialogState(() => ext.isEnabled = value);
+                        setState(() {});
+                        _controller.reload();
+                      },
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _checkIfTvDevice() async {
@@ -452,12 +598,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           onNavigationRequest: (NavigationRequest request) {
             if (_isAdOrTracker(request.url)) return NavigationDecision.prevent;
             return NavigationDecision.navigate;
-          },
-          onPageStarted: (String url) {
-            _controller.runJavaScript('''
-              Object.defineProperty(navigator, 'webdriver', { get: () => false });
-              window.navigator.chrome = { runtime: {} };
-            ''');
           },
           onPageFinished: (String url) async {
             if (url.contains('facebook.com')) {
@@ -680,6 +820,13 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                         icon: const Icon(Icons.home, size: 20),
                         onPressed: () => _loadUrl(_homeUrl),
                         tooltip: 'Home',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.extension, size: 20, color: Colors.cyanAccent),
+                        onPressed: _showExtensionsDialog,
+                        tooltip: 'Extensions',
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
