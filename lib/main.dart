@@ -49,7 +49,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   
   // Modes State
   bool _isDesktopMode = false;
-  bool _isTvMouseMode = false; // Toggle for TV virtual cursor overlay
+  bool _isTvMouseMode = false;
   
   // Virtual Cursor Coordinates for TV Mode
   double _cursorX = 300;
@@ -87,7 +87,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoForward = forward;
             });
 
-            // REACT CDN INJECTION & QUICK-FILL BRIDGE FOR META
             if (url.contains('facebook.com')) {
               _controller.runJavaScript('''
                 (function() {
@@ -192,7 +191,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      UpdateService.checkForUpdates(context, silent: true);
+      try {
+        UpdateService.checkForUpdates(context, silent: true);
+      } catch (_) {}
       FocusScope.of(context).requestFocus(_appFocusNode);
     });
   }
@@ -226,7 +227,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           await cookieManager.setCookie(
             WebViewCookie(name: 'xs', value: xs, domain: '.facebook.com', path: '/'),
           );
-          debugPrint('🍪 Loaded session cookies from Download folder!');
         }
       }
     } catch (e) {
@@ -242,25 +242,12 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     final targetUserAgent = _isDesktopMode ? _desktopUserAgent : _mobileUserAgent;
     await _controller.setUserAgent(targetUserAgent);
     _controller.reload();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_isDesktopMode ? "Switched to Desktop Mode" : "Switched to Mobile Mode"),
-        duration: const Duration(seconds: 1),
-      ),
-    );
   }
 
   void _toggleTvMouseMode() {
     setState(() {
       _isTvMouseMode = !_isTvMouseMode;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_isTvMouseMode ? "TV Mouse Mode Enabled (Use D-pad to move cursor)" : "Touch/Standard Mode Enabled"),
-        duration: const Duration(seconds: 1),
-      ),
-    );
   }
 
   void _showCredentialsDialog() {
@@ -314,10 +301,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         window._updateTvCredentials('$safeUser', '$safePass');
       }
     ''');
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Credentials loaded into React helper!'), duration: Duration(seconds: 2)),
-    );
   }
 
   bool _isAdOrTracker(String url) {
@@ -358,7 +341,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     _controller.loadRequest(Uri.parse(formattedUrl));
   }
 
-  // Handle D-Pad input when TV Mouse Mode is active
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (!_isTvMouseMode) return KeyEventResult.ignored;
 
@@ -376,7 +358,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         } else if (event.logicalKey == LogicalKeyboardKey.select || 
                    event.logicalKey == LogicalKeyboardKey.enter ||
                    event.logicalKey == LogicalKeyboardKey.space) {
-          // Simulate click at cursor position via JS
           _controller.runJavaScript('''
             var el = document.elementFromPoint($_cursorX, $_cursorY);
             if (el) {
@@ -395,7 +376,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
+      onPopInvoked: (didPop) async {
         if (didPop) return;
         
         if (await _controller.canGoBack()) {
@@ -413,7 +394,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           body: SafeArea(
             child: Column(
               children: [
-                // Toolbar
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
                   color: Colors.grey[900],
@@ -487,8 +467,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                     ],
                   ),
                 ),
-                
-                // WebView + Optional TV Virtual Mouse Overlay
                 Expanded(
                   child: Stack(
                     children: [
