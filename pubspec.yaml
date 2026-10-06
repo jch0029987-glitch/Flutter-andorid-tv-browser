@@ -35,8 +35,8 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.4.2
 
-  # --- Added for File Picker Support ---
-  file_picker: ^8.1.4
+  # --- Swapped to file_selector to bypass compileSdk 36 issues ---
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:
