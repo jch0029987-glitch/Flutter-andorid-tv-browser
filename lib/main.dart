@@ -183,7 +183,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               ''');
             }
           },
-          onWebResourceError: (WebResourceError error) -> {
+          onWebResourceError: (WebResourceError error) {
             debugPrint('WebView Error: ${error.description}');
           },
         ),
@@ -231,7 +231,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   Future<void> _requestStoragePermission() async {
     try {
       if (Platform.isAndroid) {
-        // Automatically request permission state via system platform calls to bypass restriction blocks
         await Process.run('pm', ['grant', 'com.flutterbrowser.flutter_browser_next', 'android.permission.READ_EXTERNAL_STORAGE']);
         await Process.run('pm', ['grant', 'com.flutterbrowser.flutter_browser_next', 'android.permission.WRITE_EXTERNAL_STORAGE']);
       }
