@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'virtual_mouse.dart';
 import 'update_service.dart';
 
 void main() {
@@ -42,16 +41,13 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocusNode = FocusNode();
   
-  // Key to control the virtual mouse overlay focus externally
-  final GlobalKey<VirtualMouseOverlayState> _mouseOverlayKey = GlobalKey<VirtualMouseOverlayState>();
-  
   final String _homeUrl = 'https://www.facebook.com/login';
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _currentUrl = 'https://www.facebook.com/login';
   
-  // User Agent Mode State
-  bool _isDesktopMode = true;
+  // User Agent Mode State (Default to mobile on phones)
+  bool _isDesktopMode = false;
   
   static const String _desktopUserAgent = 
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -65,7 +61,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(_desktopUserAgent)
+      ..setUserAgent(_mobileUserAgent)
       ..setNavigationDelegate(
         NavigationDelegate(
           // Ad-blocker & tracker interception
@@ -105,7 +101,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                   };
                   document.head.appendChild(reactScript);
 
-                  // 2. Mount React TV Helper Component
+                  // 2. Mount Mobile React Helper Component
                   function mountReactOverlay() {
                     var container = document.createElement('div');
                     container.id = 'tv-react-helper-root';
@@ -149,28 +145,28 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                         style: {
                           background: 'rgba(20, 20, 20, 0.95)',
                           color: '#00ffcc',
-                          padding: '16px',
+                          padding: '12px',
                           borderRadius: '12px',
                           fontFamily: 'sans-serif',
-                          fontSize: '13px',
+                          fontSize: '12px',
                           boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
                           border: '1px solid #00ffcc',
-                          width: '240px'
+                          width: '210px'
                         }
                       }, [
-                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' } }, '📺 TV React Helper'),
-                        React.createElement('div', { key: 'status', style: { color: '#ffffff', fontSize: '11px', marginBottom: '10px' } }, 'Status: ' + status),
+                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' } }, '📱 Mobile Quick-Fill'),
+                        React.createElement('div', { key: 'status', style: { color: '#ffffff', fontSize: '10px', marginBottom: '8px' } }, 'Status: ' + status),
                         
                         React.createElement('button', {
                           key: 'btn-email',
                           onClick: () => fillInput('#email', window._tvUser || ''),
-                          style: { width: '100%', padding: '8px', marginBottom: '6px', background: '#1877f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
+                          style: { width: '100%', padding: '6px', marginBottom: '4px', background: '#1877f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
                         }, '⚡ Fill Email/Phone'),
 
                         React.createElement('button', {
                           key: 'btn-pass',
                           onClick: () => fillInput('#pass', window._tvPass || ''),
-                          style: { width: '100%', padding: '8px', background: '#d93838', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
+                          style: { width: '100%', padding: '6px', background: '#d93838', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
                         }, '⚡ Fill Password')
                       ]);
                     }
@@ -188,12 +184,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       );
 
-    // Load session cookies from local ADB file first, then load request
+    // Load session cookies from public Download folder via ADB first, then load request
     _loadCookiesFromFile().then((_) {
       _controller.loadRequest(Uri.parse(_homeUrl));
     });
 
-    // Automatically check for GitHub updates silently right after launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdateService.checkForUpdates(context, silent: true);
     });
@@ -206,11 +201,14 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     super.dispose();
   }
 
-  // Load session cookies pushed via ADB
+  // Load session cookies from public /sdcard/Download/session_config.json
   Future<void> _loadCookiesFromFile() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/session_config.json');
+      final directory = await getExternalStorageDirectory();
+      if (directory == null) return;
+      
+      // Point to Download folder so adb push doesn't throw Permission Denied
+      final file = File('${directory.path}/Download/session_config.json');
       
       if (await file.exists()) {
         final contents = await file.readAsString();
@@ -227,7 +225,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           await cookieManager.setCookie(
             WebViewCookie(name: 'xs', value: xs, domain: '.facebook.com', path: '/'),
           );
-          debugPrint('🍪 Loaded session cookies from local file via ADB!');
+          debugPrint('🍪 Loaded session cookies from Download folder!');
         }
       }
     } catch (e) {
@@ -235,7 +233,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     }
   }
 
-  // Toggle between Desktop and Mobile User Agents
   void _toggleDesktopMode() async {
     setState(() {
       _isDesktopMode = !_isDesktopMode;
@@ -253,7 +250,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     );
   }
 
-  // Secure In-App Credentials Dialog for TV
   void _showCredentialsDialog() {
     final TextEditingController userController = TextEditingController();
     final TextEditingController passController = TextEditingController();
@@ -311,18 +307,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     );
   }
 
-  // Jump focus to URL toolbar when Escape is pressed on the webpage
-  void _jumpToToolbar() {
-    FocusScope.of(context).requestFocus(_urlFocusNode);
-  }
-
-  // Domain filter for the lightweight built-in ad blocker
   bool _isAdOrTracker(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
     
     final host = uri.host.toLowerCase();
-
     const blockedDomains = {
       'googlesyndication.com',
       'doubleclick.net',
@@ -354,7 +343,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       }
     }
     _controller.loadRequest(Uri.parse(formattedUrl));
-    _mouseOverlayKey.currentState?.focusOverlay();
   }
 
   @override
@@ -373,84 +361,68 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         }
       },
       child: Scaffold(
-        body: Focus(
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent) {
-              if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
-                  event.logicalKey == LogicalKeyboardKey.f2) {
-                _jumpToToolbar();
-                return KeyEventResult.handled;
-              }
-            }
-            return KeyEventResult.ignored;
-          },
+        body: SafeArea(
           child: Column(
             children: [
-              // Top Toolbar (Remote Focusable Controls)
+              // Phone-optimized compact toolbar
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
                 color: Colors.grey[900],
                 child: Row(
                   children: [
                     IconButton(
-                      focusColor: Colors.blueAccent,
-                      icon: const Icon(Icons.arrow_back),
+                      icon: const Icon(Icons.arrow_back, size: 20),
                       onPressed: _canGoBack ? () => _controller.goBack() : null,
                       tooltip: 'Back',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
-                    const SizedBox(width: 4),
                     IconButton(
-                      focusColor: Colors.blueAccent,
-                      icon: const Icon(Icons.arrow_forward),
+                      icon: const Icon(Icons.arrow_forward, size: 20),
                       onPressed: _canGoForward ? () => _controller.goForward() : null,
                       tooltip: 'Forward',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
-                    const SizedBox(width: 4),
                     IconButton(
-                      focusColor: Colors.blueAccent,
-                      icon: const Icon(Icons.home),
+                      icon: const Icon(Icons.home, size: 20),
                       onPressed: () => _loadUrl(_homeUrl),
                       tooltip: 'Home',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
-                    const SizedBox(width: 4),
                     IconButton(
-                      focusColor: Colors.blueAccent,
-                      icon: Icon(_isDesktopMode ? Icons.desktop_windows : Icons.phone_android),
+                      icon: Icon(_isDesktopMode ? Icons.desktop_windows : Icons.phone_android, size: 20),
                       onPressed: _toggleDesktopMode,
-                      tooltip: _isDesktopMode ? 'Switch to Mobile View' : 'Switch to Desktop View',
+                      tooltip: 'Toggle Desktop/Mobile Mode',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
-                    const SizedBox(width: 4),
                     IconButton(
-                      focusColor: Colors.blueAccent,
-                      icon: const Icon(Icons.vpn_key),
+                      icon: const Icon(Icons.vpn_key, size: 20),
                       onPressed: _showCredentialsDialog,
                       tooltip: 'Set Login Credentials',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
-                    const SizedBox(width: 12),
-                    // URL / Search Input wrapped in Focus to catch Escape key
+                    const SizedBox(width: 4),
                     Expanded(
-                      child: Focus(
-                        onKeyEvent: (node, event) {
-                          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
-                            _mouseOverlayKey.currentState?.focusOverlay();
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
+                      child: SizedBox(
+                        height: 38,
                         child: TextField(
                           controller: _urlController,
                           focusNode: _urlFocusNode,
-                          style: const TextStyle(color: Colors.white),
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
                           decoration: InputDecoration(
                             hintText: 'Search or enter address...',
-                            hintStyle: TextStyle(color: Colors.grey[400]),
+                            hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
                             filled: true,
                             fillColor: Colors.grey[800],
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8.0),
+                              borderRadius: BorderRadius.circular(6.0),
                               borderSide: BorderSide.none,
                             ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 0),
                           ),
                           onSubmitted: (value) => _loadUrl(value),
                         ),
@@ -460,14 +432,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                 ),
               ),
               
-              // Core Web Engine wrapped inside the Virtual Mouse Overlay
+              // Standard touch-friendly WebView
               Expanded(
-                child: VirtualMouseOverlay(
-                  key: _mouseOverlayKey,
-                  controller: _controller,
-                  onToggleToolbar: _jumpToToolbar,
-                  child: WebViewWidget(controller: _controller),
-                ),
+                child: WebViewWidget(controller: _controller),
               ),
             ],
           ),
