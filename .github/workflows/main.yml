@@ -1,12 +1,15 @@
-name: Build Signed Mobile & TV APKs (ARM64 & ARMv7)
+name: Build & Publish Release APKs
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-signed-apks:
-    name: Build & Sign Split APKs
+  build-and-release:
+    name: Build, Sign and Release APKs
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # Required to create GitHub releases and upload assets
 
     steps:
       - name: Checkout repository
@@ -45,10 +48,15 @@ jobs:
         run: |
           flutter build apk --release --split-per-abi
 
-      - name: Upload Signed APK Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Release and Upload APKs to GitHub Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: signed-browser-apks-arm64-v7a
-          path: |
+          tag_name: release-${{ github.run_number }}
+          name: "Flutter Browser Next v1.0.${{ github.run_number }}"
+          files: |
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
