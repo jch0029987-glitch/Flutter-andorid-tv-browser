@@ -60,7 +60,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   String _currentUrl = 'https://m.facebook.com/login';
   
   bool _isDesktopMode = false;
-  bool _isTvMouseMode = false; // Will auto-enable if TV/Desktop is detected
+  bool _isTvMouseMode = false;
   
   double _cursorX = 300;
   double _cursorY = 300;
@@ -76,7 +76,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   void initState() {
     super.initState();
     _urlController.text = _homeUrl;
-    _checkIfTvDevice(); // 📺 Auto-detect if running on TV or Desktop
+    _checkIfTvDevice();
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -321,8 +321,8 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                         context,
                         MaterialPageRoute(
                           builder: (context) => TvPairingScreen(
-                            onSynced: (rawCookies) {
-                              _injectCookieStringDirectly(rawCookies);
+                            onSynced: (rawData) {
+                              _injectProfileDataDirectly(rawData);
                             },
                           ),
                         ),
@@ -397,27 +397,68 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     );
   }
 
-  Future<void> _injectCookieStringDirectly(String rawCookies) async {
-    final cookieManager = WebViewCookieManager();
-    List<String> pairs = rawCookies.split(';');
+  Future<void> _injectProfileDataDirectly(String rawData) async {
+    try {
+      final Map<String, dynamic> data = jsonDecode(rawData);
+      final String rawCookies = data['cookies'] ?? '';
+      final Map<String, dynamic> localStore = data['localStorage'] ?? {};
+      final Map<String, dynamic> sessionStore = data['sessionStorage'] ?? {};
 
-    for (String pair in pairs) {
-      List<String> parts = pair.split('=');
-      if (parts.length >= 2) {
-        String name = parts[0].trim();
-        String value = parts.sublist(1).join('=').trim();
-
-        if (name.isNotEmpty && value.isNotEmpty) {
-          await cookieManager.setCookie(
-            WebViewCookie(name: name, value: value, domain: '.facebook.com', path: '/'),
-          );
+      // 1. Restore Cookies via CookieManager
+      final cookieManager = WebViewCookieManager();
+      List<String> pairs = rawCookies.split(';');
+      for (String pair in pairs) {
+        List<String> parts = pair.split('=');
+        if (parts.length >= 2) {
+          String name = parts[0].trim();
+          String value = parts.sublist(1).join('=').trim();
+          if (name.isNotEmpty && value.isNotEmpty) {
+            await cookieManager.setCookie(
+              WebViewCookie(name: name, value: value, domain: '.facebook.com', path: '/'),
+            );
+          }
         }
       }
+
+      // 2. Setup navigation delegate to restore LocalStorage and SessionStorage upon reaching Facebook
+      _controller.setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (NavigationRequest request) {
+            if (_isAdOrTracker(request.url)) return NavigationDecision.prevent;
+            return NavigationDecision.navigate;
+          },
+          onPageFinished: (String url) async {
+            if (url.contains('facebook.com')) {
+              StringBuffer jsBuilder = StringBuffer();
+
+              // Rebuild LocalStorage items
+              localStore.forEach((key, val) {
+                final sKey = key.replaceAll("'", "\\'");
+                final sVal = val.toString().replaceAll("'", "\\'");
+                jsBuilder.write("window.localStorage.setItem('$sKey', '$sVal');\n");
+              });
+
+              // Rebuild SessionStorage items
+              sessionStore.forEach((key, val) {
+                final sKey = key.replaceAll("'", "\\'");
+                final sVal = val.toString().replaceAll("'", "\\'");
+                jsBuilder.write("window.sessionStorage.setItem('$sKey', '$sVal');\n");
+              });
+
+              await _controller.runJavaScript(jsBuilder.toString());
+              debugPrint('✅ Full browser storage profile reconstructed.');
+            }
+          },
+        ),
+      );
+
+      _showToast('✅ Profile synced! Loading feed...');
+      _controller.loadRequest(Uri.parse('https://m.facebook.com/'));
+      
+    } catch (e) {
+      debugPrint('Error restoring profile payload: $e');
+      _showToast('❌ Failed to parse session profile');
     }
-    
-    // 🚀 Auto-navigate to main feed/home after injection so session activates & auto-logs in instantly
-    _showToast('✅ Synced! Logging into TV session...');
-    _controller.loadRequest(Uri.parse('https://m.facebook.com/'));
   }
 
   Future<void> _loadCookiesFromFile() async {
@@ -444,13 +485,18 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         final contents = await targetFile.readAsString();
         final decodedData = jsonDecode(contents);
         
+        // Handle full profile json format if loaded from file
+        if (decodedData is Map && decodedData.containsKey('cookies')) {
+          _injectProfileDataDirectly(contents);
+          return;
+        }
+
+        // Fallback for older cookie-only json files
         final cookieManager = WebViewCookieManager();
         List<dynamic> cookiesList = [];
 
         if (decodedData is List) {
           cookiesList = decodedData;
-        } else if (decodedData is Map && decodedData.containsKey('cookies')) {
-          cookiesList = decodedData['cookies'];
         } else if (decodedData is Map) {
           decodedData.forEach((key, value) {
             cookiesList.add({'name': key, 'value': value, 'domain': '.facebook.com', 'path': '/'});
@@ -912,7 +958,7 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Text(
-                      'Scan this QR code with your phone app to sync session:',
+                      'Scan this QR code with your phone app to sync profile:',
                       style: TextStyle(fontSize: 18, color: Colors.white70),
                       textAlign: TextAlign.center,
                     ),
@@ -1025,7 +1071,7 @@ class _PhonePairingScreenState extends State<PhonePairingScreen> {
                       Navigator.pop(context);
                     }
                     
-                    _sendCookiesOverWebSocket(rawValue);
+                    _sendBrowserProfileOverWebSocket(rawValue);
                     return;
                   }
                 }
@@ -1057,27 +1103,52 @@ class _PhonePairingScreenState extends State<PhonePairingScreen> {
     );
   }
 
-  Future<void> _sendCookiesOverWebSocket(String wsUrl) async {
+  Future<void> _sendBrowserProfileOverWebSocket(String wsUrl) async {
     try {
-      final cookiesString = await widget.webController.runJavaScriptReturningResult('document.cookie');
-      String cleanCookies = cookiesString.toString();
+      // Deep profile capture script: grabs Cookies, LocalStorage, and SessionStorage
+      final profileScript = '''
+        (function() {
+          var profile = {
+            cookies: document.cookie,
+            localStorage: {},
+            sessionStorage: {}
+          };
+
+          for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            profile.localStorage[key] = localStorage.getItem(key);
+          }
+
+          for (var j = 0; j < sessionStorage.length; j++) {
+            var sKey = sessionStorage.key(j);
+            profile.sessionStorage[sKey] = sessionStorage.getItem(sKey);
+          }
+
+          return JSON.stringify(profile);
+        })();
+      ''';
+
+      final result = await widget.webController.runJavaScriptReturningResult(profileScript);
+      String cleanJson = result.toString();
       
-      if (cleanCookies.startsWith('"') && cleanCookies.endsWith('"')) {
-        cleanCookies = cleanCookies.substring(1, cleanCookies.length - 1);
+      if (cleanJson.startsWith('"') && cleanJson.endsWith('"')) {
+        cleanJson = cleanJson.substring(1, cleanJson.length - 1)
+            .replaceAll(r'\"', '"')
+            .replaceAll(r'\\', '\\');
       }
 
-      if (cleanCookies.isEmpty || cleanCookies == 'null') {
-        widget.showToast('⚠ No active cookies found to push');
+      if (cleanJson.isEmpty || cleanJson == 'null') {
+        widget.showToast('⚠ No active browser profile found to push');
         return;
       }
 
       final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-      channel.sink.add(cleanCookies);
-      widget.showToast('📤 Pushing session to TV...');
+      channel.sink.add(cleanJson);
+      widget.showToast('📤 Pushing full browser profile to TV...');
 
       channel.stream.listen((message) {
         if (message.toString() == 'SUCCESS') {
-          widget.showToast('✅ Successfully pushed to TV!');
+          widget.showToast('✅ Profile successfully pushed to TV!');
           channel.sink.close();
         }
       }, onError: (error) {
@@ -1085,7 +1156,7 @@ class _PhonePairingScreenState extends State<PhonePairingScreen> {
         debugPrint('WS Error: $error');
       });
     } catch (e) {
-      debugPrint('Error sending cookies: $e');
+      debugPrint('Error sending profile: $e');
       widget.showToast('❌ Failed to connect to TV address');
     }
   }
