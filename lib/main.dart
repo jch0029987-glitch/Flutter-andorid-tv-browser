@@ -40,14 +40,20 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   late final WebViewController _controller;
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocusNode = FocusNode();
+  final FocusNode _appFocusNode = FocusNode();
   
   final String _homeUrl = 'https://www.facebook.com/login';
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _currentUrl = 'https://www.facebook.com/login';
   
-  // User Agent Mode State (Default to mobile on phones)
+  // Modes State
   bool _isDesktopMode = false;
+  bool _isTvMouseMode = false; // Toggle for TV virtual cursor overlay
+  
+  // Virtual Cursor Coordinates for TV Mode
+  double _cursorX = 300;
+  double _cursorY = 300;
   
   static const String _desktopUserAgent = 
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -64,7 +70,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       ..setUserAgent(_mobileUserAgent)
       ..setNavigationDelegate(
         NavigationDelegate(
-          // Ad-blocker & tracker interception
           onNavigationRequest: (NavigationRequest request) {
             if (_isAdOrTracker(request.url)) {
               debugPrint('🚫 Blocked Ad/Tracker: ${request.url}');
@@ -89,7 +94,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                   if (window._reactInjected) return;
                   window._reactInjected = true;
 
-                  // 1. Load React CDN
                   var reactScript = document.createElement('script');
                   reactScript.src = 'https://unpkg.com/react@18/umd/react.production.min.js';
                   
@@ -101,7 +105,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                   };
                   document.head.appendChild(reactScript);
 
-                  // 2. Mount Mobile React Helper Component
                   function mountReactOverlay() {
                     var container = document.createElement('div');
                     container.id = 'tv-react-helper-root';
@@ -154,7 +157,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                           width: '210px'
                         }
                       }, [
-                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' } }, '📱 Mobile Quick-Fill'),
+                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' } }, '📺/📱 Quick-Fill'),
                         React.createElement('div', { key: 'status', style: { color: '#ffffff', fontSize: '10px', marginBottom: '8px' } }, 'Status: ' + status),
                         
                         React.createElement('button', {
@@ -184,13 +187,13 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       );
 
-    // Load session cookies from public Download folder via ADB first, then load request
     _loadCookiesFromFile().then((_) {
       _controller.loadRequest(Uri.parse(_homeUrl));
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdateService.checkForUpdates(context, silent: true);
+      FocusScope.of(context).requestFocus(_appFocusNode);
     });
   }
 
@@ -198,18 +201,16 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   void dispose() {
     _urlController.dispose();
     _urlFocusNode.dispose();
+    _appFocusNode.dispose();
     super.dispose();
   }
 
-  // Load session cookies from public /sdcard/Download/session_config.json
   Future<void> _loadCookiesFromFile() async {
     try {
       final directory = await getExternalStorageDirectory();
       if (directory == null) return;
       
-      // Point to Download folder so adb push doesn't throw Permission Denied
       final file = File('${directory.path}/Download/session_config.json');
-      
       if (await file.exists()) {
         final contents = await file.readAsString();
         final data = jsonDecode(contents);
@@ -245,6 +246,18 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(_isDesktopMode ? "Switched to Desktop Mode" : "Switched to Mobile Mode"),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _toggleTvMouseMode() {
+    setState(() {
+      _isTvMouseMode = !_isTvMouseMode;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_isTvMouseMode ? "TV Mouse Mode Enabled (Use D-pad to move cursor)" : "Touch/Standard Mode Enabled"),
         duration: const Duration(seconds: 1),
       ),
     );
@@ -345,6 +358,39 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     _controller.loadRequest(Uri.parse(formattedUrl));
   }
 
+  // Handle D-Pad input when TV Mouse Mode is active
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_isTvMouseMode) return KeyEventResult.ignored;
+
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      const double step = 20.0;
+      setState(() {
+        if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+          _cursorY = (_cursorY - step).clamp(0.0, MediaQuery.of(context).size.height);
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+          _cursorY = (_cursorY + step).clamp(0.0, MediaQuery.of(context).size.height);
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          _cursorX = (_cursorX - step).clamp(0.0, MediaQuery.of(context).size.width);
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          _cursorX = (_cursorX + step).clamp(0.0, MediaQuery.of(context).size.width);
+        } else if (event.logicalKey == LogicalKeyboardKey.select || 
+                   event.logicalKey == LogicalKeyboardKey.enter ||
+                   event.logicalKey == LogicalKeyboardKey.space) {
+          // Simulate click at cursor position via JS
+          _controller.runJavaScript('''
+            var el = document.elementFromPoint($_cursorX, $_cursorY);
+            if (el) {
+              el.click();
+              el.focus();
+            }
+          ''');
+        }
+      });
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -360,83 +406,124 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           }
         }
       },
-      child: Scaffold(
-        body: SafeArea(
-          child: Column(
-            children: [
-              // Phone-optimized compact toolbar
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
-                color: Colors.grey[900],
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, size: 20),
-                      onPressed: _canGoBack ? () => _controller.goBack() : null,
-                      tooltip: 'Back',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.arrow_forward, size: 20),
-                      onPressed: _canGoForward ? () => _controller.goForward() : null,
-                      tooltip: 'Forward',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.home, size: 20),
-                      onPressed: () => _loadUrl(_homeUrl),
-                      tooltip: 'Home',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    IconButton(
-                      icon: Icon(_isDesktopMode ? Icons.desktop_windows : Icons.phone_android, size: 20),
-                      onPressed: _toggleDesktopMode,
-                      tooltip: 'Toggle Desktop/Mobile Mode',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.vpn_key, size: 20),
-                      onPressed: _showCredentialsDialog,
-                      tooltip: 'Set Login Credentials',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: SizedBox(
-                        height: 38,
-                        child: TextField(
-                          controller: _urlController,
-                          focusNode: _urlFocusNode,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Search or enter address...',
-                            hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
-                            filled: true,
-                            fillColor: Colors.grey[800],
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(6.0),
-                              borderSide: BorderSide.none,
+      child: Focus(
+        focusNode: _appFocusNode,
+        onKeyEvent: _handleKeyEvent,
+        child: Scaffold(
+          body: SafeArea(
+            child: Column(
+              children: [
+                // Toolbar
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
+                  color: Colors.grey[900],
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, size: 20),
+                        onPressed: _canGoBack ? () => _controller.goBack() : null,
+                        tooltip: 'Back',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.arrow_forward, size: 20),
+                        onPressed: _canGoForward ? () => _controller.goForward() : null,
+                        tooltip: 'Forward',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.home, size: 20),
+                        onPressed: () => _loadUrl(_homeUrl),
+                        tooltip: 'Home',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: Icon(_isDesktopMode ? Icons.desktop_windows : Icons.phone_android, size: 20),
+                        onPressed: _toggleDesktopMode,
+                        tooltip: 'Toggle Desktop/Mobile Mode',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: Icon(_isTvMouseMode ? Icons.mouse : Icons.tv, size: 20, color: _isTvMouseMode ? Colors.cyanAccent : Colors.white),
+                        onPressed: _toggleTvMouseMode,
+                        tooltip: 'Toggle TV Mouse Mode',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.vpn_key, size: 20),
+                        onPressed: _showCredentialsDialog,
+                        tooltip: 'Set Login Credentials',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: SizedBox(
+                          height: 38,
+                          child: TextField(
+                            controller: _urlController,
+                            focusNode: _urlFocusNode,
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            decoration: InputDecoration(
+                              hintText: 'Search or enter address...',
+                              hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
+                              filled: true,
+                              fillColor: Colors.grey[800],
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(6.0),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 0),
                             ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 0),
+                            onSubmitted: (value) => _loadUrl(value),
                           ),
-                          onSubmitted: (value) => _loadUrl(value),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              
-              // Standard touch-friendly WebView
-              Expanded(
-                child: WebViewWidget(controller: _controller),
-              ),
-            ],
+                
+                // WebView + Optional TV Virtual Mouse Overlay
+                Expanded(
+                  child: Stack(
+                    children: [
+                      WebViewWidget(controller: _controller),
+                      if (_isTvMouseMode)
+                        Positioned(
+                          left: _cursorX - 12,
+                          top: _cursorY - 12,
+                          child: IgnorePointer(
+                            child: Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: Colors.cyanAccent.withOpacity(0.8),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.5),
+                                    blurRadius: 6,
+                                    spreadRadius: 2,
+                                  ),
+                                ],
+                              ),
+                              child: const Center(
+                                child: Icon(Icons.navigation, size: 12, color: Colors.black),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
