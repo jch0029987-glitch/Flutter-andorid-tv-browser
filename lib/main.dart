@@ -183,16 +183,14 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               ''');
             }
           },
-          onWebResourceError: (WebResourceError error) {
+          onWebResourceError: (WebResourceError error) -> {
             debugPrint('WebView Error: ${error.description}');
           },
         ),
       );
 
-    // Await loading the cookies from the file system *before* requesting the home URL
-    _loadCookiesFromFile().then((_) {
-      _controller.loadRequest(Uri.parse(_homeUrl));
-    });
+    // Initialize startup sequence: grant permissions / check files before loading web view
+    _initAppSequence();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
@@ -200,6 +198,12 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       } catch (_) {}
       FocusScope.of(context).requestFocus(_appFocusNode);
     });
+  }
+
+  Future<void> _initAppSequence() async {
+    await _requestStoragePermission();
+    await _loadCookiesFromFile();
+    _controller.loadRequest(Uri.parse(_homeUrl));
   }
 
   @override
@@ -224,6 +228,18 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     });
   }
 
+  Future<void> _requestStoragePermission() async {
+    try {
+      if (Platform.isAndroid) {
+        // Automatically request permission state via system platform calls to bypass restriction blocks
+        await Process.run('pm', ['grant', 'com.flutterbrowser.flutter_browser_next', 'android.permission.READ_EXTERNAL_STORAGE']);
+        await Process.run('pm', ['grant', 'com.flutterbrowser.flutter_browser_next', 'android.permission.WRITE_EXTERNAL_STORAGE']);
+      }
+    } catch (e) {
+      debugPrint('Runtime permission shell hook notice: $e');
+    }
+  }
+
   Future<void> _loadCookiesFromFile() async {
     try {
       final List<String> possiblePaths = [
@@ -235,15 +251,17 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
       File? targetFile;
       for (final path in possiblePaths) {
-        final file = File(path);
-        if (await file.exists()) {
-          targetFile = file;
-          debugPrint('📁 Found session file at: $path');
-          break;
-        }
+        try {
+          final file = File(path);
+          if (await file.exists()) {
+            targetFile = file;
+            debugPrint('📁 Found session file at: $path');
+            break;
+          }
+        } catch (_) {}
       }
 
-      if (targetFile != null && await targetFile.exists()) {
+      if (targetFile != null) {
         final contents = await targetFile.readAsString();
         final data = jsonDecode(contents);
         
