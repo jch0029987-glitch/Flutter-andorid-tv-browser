@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:file_selector/file_selector.dart'; // <--- Swapped to file_selector
+import 'package:file_selector/file_selector.dart';
 import 'update_service.dart';
 
 // WebSocket packages for phone-to-TV sync
@@ -26,11 +26,12 @@ void main() {
 
 class BrowserExtension {
   final String id;
-  final String name;
-  final String description;
+  String name;
+  String description;
   String jsCode;
   bool isEnabled;
   final bool isAsset;
+  final String? filePath; // Used for deletion of local files
 
   BrowserExtension({
     required this.id,
@@ -39,6 +40,7 @@ class BrowserExtension {
     required this.jsCode,
     this.isEnabled = true,
     required this.isAsset,
+    this.filePath,
   });
 }
 
@@ -77,6 +79,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _currentUrl = 'https://m.facebook.com/login';
+  double _loadingProgress = 0.0; // Track progress bar value
   
   bool _isDesktopMode = false;
   bool _isTvMouseMode = false;
@@ -111,7 +114,15 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
             }
             return NavigationDecision.navigate;
           },
+          onProgress: (int progress) {
+            setState(() {
+              _loadingProgress = progress / 100.0;
+            });
+          },
           onPageStarted: (String url) {
+            setState(() {
+              _loadingProgress = 0.1;
+            });
             _controller.runJavaScript('''
               Object.defineProperty(navigator, 'webdriver', { get: () => false });
               window.navigator.chrome = { runtime: {} };
@@ -126,6 +137,16 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _urlController.text = url;
               _canGoBack = back;
               _canGoForward = forward;
+              _loadingProgress = 1.0;
+            });
+
+            // Hide progress bar shortly after completion
+            Future.delayed(const Duration(milliseconds: 400), () {
+              if (mounted) {
+                setState(() {
+                  _loadingProgress = 0.0;
+                });
+              }
             });
 
             // Run active extensions after page finishes loading
@@ -135,7 +156,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               }
             }
 
-            // Universal Facebook detection (works for both phone & TV in mobile/desktop modes)
+            // Universal Facebook login quick-helper injection
             if (url.contains('facebook.com')) {
               _controller.runJavaScript('''
                 (function() {
@@ -177,7 +198,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
                       const fillInput = (type, value) => {
                         let field = null;
-                        
                         if (type === 'email') {
                           field = document.querySelector('#email') || 
                                   document.querySelector('input[name="email"]') || 
@@ -270,14 +290,28 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     try {
       _extensions.clear();
 
-      // 1. Load Asset Extensions (bundled with project)
+      // 1. Load Asset Extensions
       String darkModeCode = await rootBundle.loadString('assets/extensions/dark_mode.js');
       String bannerCode = await rootBundle.loadString('assets/extensions/banner_cleaner.js');
 
-      _extensions.add(BrowserExtension(id: 'dark_mode', name: 'Force Dark Mode', description: 'Built-in asset script', jsCode: darkModeCode, isEnabled: false, isAsset: true));
-      _extensions.add(BrowserExtension(id: 'banner_cleaner', name: 'Banner Cleaner', description: 'Built-in asset script', jsCode: bannerCode, isEnabled: true, isAsset: true));
+      _extensions.add(BrowserExtension(
+        id: 'dark_mode', 
+        name: 'Force Dark Mode', 
+        description: 'Built-in asset script', 
+        jsCode: darkModeCode, 
+        isEnabled: false, 
+        isAsset: true,
+      ));
+      _extensions.add(BrowserExtension(
+        id: 'banner_cleaner', 
+        name: 'Banner Cleaner', 
+        description: 'Built-in asset script', 
+        jsCode: bannerCode, 
+        isEnabled: true, 
+        isAsset: true,
+      ));
 
-      // 2. Load Local Custom File Extensions from App Directory
+      // 2. Load Local Extensions from App Directory
       final directory = await getApplicationDocumentsDirectory();
       final extDir = Directory('${directory.path}/extensions');
       if (await extDir.exists()) {
@@ -289,10 +323,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
             _extensions.add(BrowserExtension(
               id: file.path,
               name: fileName,
-              description: 'Imported file script',
+              description: 'Local file script',
               jsCode: content,
               isEnabled: true,
               isAsset: false,
+              filePath: file.path,
             ));
           }
         }
@@ -331,58 +366,40 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     }
   }
 
-  void _showExtensionsDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Extensions'),
-                  IconButton(
-                    icon: const Icon(Icons.file_upload, color: Colors.cyanAccent),
-                    tooltip: 'Import .js File',
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _importJsFile();
-                    },
-                  )
-                ],
-              ),
-              content: SizedBox(
-                width: 340,
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _extensions.length,
-                  itemBuilder: (context, index) {
-                    final ext = _extensions[index];
-                    return SwitchListTile(
-                      title: Text(ext.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: Text('${ext.description} (${ext.isAsset ? "Asset" : "Local"})', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                      value: ext.isEnabled,
-                      activeColor: Colors.cyanAccent,
-                      onChanged: (bool value) {
-                        setDialogState(() => ext.isEnabled = value);
-                        setState(() {});
-                        _controller.reload();
-                      },
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
-                ),
-              ],
-            );
+  Future<void> _deleteLocalExtension(BrowserExtension ext) async {
+    if (ext.isAsset || ext.filePath == null) return;
+    try {
+      final file = File(ext.filePath!);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      await _loadExtensionsAndInit();
+      _showToast('🗑️ Deleted extension: ${ext.name}');
+    } catch (e) {
+      _showToast('❌ Failed to delete extension');
+    }
+  }
+
+  void _openExtensionManager() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ExtensionManagerScreen(
+          extensions: _extensions,
+          onToggle: (ext, value) {
+            setState(() {
+              ext.isEnabled = value;
+            });
+            _controller.reload();
           },
-        );
-      },
+          onImport: () async {
+            await _importJsFile();
+          },
+          onDelete: (ext) async {
+            await _deleteLocalExtension(ext);
+          },
+        ),
+      ),
     );
   }
 
@@ -443,7 +460,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         if (!status.isGranted) {
           status = await Permission.manageExternalStorage.request();
         }
-        
         if (!status.isGranted) {
           _showToast('⚠️ Please grant "All files access" for Downloads');
           await openAppSettings();
@@ -798,6 +814,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           body: SafeArea(
             child: Column(
               children: [
+                // Top Navigation Bar
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
                   color: Colors.grey[900],
@@ -826,8 +843,8 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.extension, size: 20, color: Colors.cyanAccent),
-                        onPressed: _showExtensionsDialog,
-                        tooltip: 'Extensions',
+                        onPressed: _openExtensionManager,
+                        tooltip: 'Extension Manager Hub',
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
@@ -878,6 +895,16 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                     ],
                   ),
                 ),
+                
+                // Progress Loading Bar
+                if (_loadingProgress > 0.0 && _loadingProgress < 1.0)
+                  const LinearProgressIndicator(
+                    minHeight: 3,
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                  ),
+
+                // Browser Body View
                 Expanded(
                   child: Stack(
                     children: [
@@ -955,6 +982,102 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   }
 }
 
+// ==========================================
+// Extension Manager Hub Page UI
+// ==========================================
+class ExtensionManagerScreen extends StatelessWidget {
+  final List<BrowserExtension> extensions;
+  final Function(BrowserExtension, bool) onToggle;
+  final VoidCallback onImport;
+  final Function(BrowserExtension) onDelete;
+
+  const ExtensionManagerScreen({
+    super.key,
+    required this.extensions,
+    required this.onToggle,
+    required this.onImport,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Extension Manager Hub'),
+        backgroundColor: Colors.black,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload, color: Colors.cyanAccent),
+            tooltip: 'Import JavaScript File',
+            onPressed: onImport,
+          ),
+        ],
+      ),
+      backgroundColor: Colors.grey[900],
+      body: extensions.isEmpty
+          ? const Center(
+              child: Text(
+                'No extensions loaded yet.\nClick the upload icon to add custom .js scripts.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 14),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: extensions.length,
+              itemBuilder: (context, index) {
+                final ext = extensions[index];
+                return Card(
+                  color: Colors.grey[850],
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  child: SwitchListTile(
+                    title: Row(
+                      children: [
+                        Text(ext.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: ext.isAsset ? Colors.blue.withOpacity(0.2) : Colors.green.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: ext.isAsset ? Colors.blueAccent : Colors.greenAccent, width: 0.8),
+                          ),
+                          child: Text(
+                            ext.isAsset ? 'Built-in' : 'Local',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: ext.isAsset ? Colors.blueAccent : Colors.greenAccent,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 4.0),
+                      child: Text(ext.description, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ),
+                    value: ext.isEnabled,
+                    activeColor: Colors.cyanAccent,
+                    secondary: !ext.isAsset
+                        ? IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                            tooltip: 'Delete Script',
+                            onPressed: () => onDelete(ext),
+                          )
+                        : const Icon(Icons.lock_outline, color: Colors.grey, size: 20),
+                    onChanged: (bool value) => onToggle(ext, value),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+// ==========================================
+// TV Pairing Screen
+// ==========================================
 class TvPairingScreen extends StatefulWidget {
   final Function(String) onSynced;
   const TvPairingScreen({super.key, required this.onSynced});
@@ -1044,6 +1167,9 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
   }
 }
 
+// ==========================================
+// Phone Pairing Screen
+// ==========================================
 class PhonePairingScreen extends StatefulWidget {
   final WebViewController webController;
   final Function(String) showToast;
