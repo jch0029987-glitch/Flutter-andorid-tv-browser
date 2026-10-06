@@ -14,27 +14,26 @@ dependencies:
     sdk: flutter
 
   permission_handler: ^11.3.0
-  # The following adds the Cupertino Icons font to your application.
   cupertino_icons: ^1.0.8
-
-  # Added for the Android TV browser engine
   webview_flutter: ^4.10.0
-
-  # Added for managing local bookmarks, history, and preferences
   shared_preferences: ^2.3.2
 
-  # --- Added for the In-App Update System ---
+  # In-App Update System
   http: ^1.2.0
   path_provider: ^2.1.2
   open_filex: ^4.7.0
   package_info_plus: ^8.3.1
   device_info_plus: ^10.1.0
 
-  # --- Added for Phone-to-TV Local WebSocket Sync ---
+  # Phone-to-TV Local WebSocket Sync
   shelf: ^1.4.1
   shelf_web_socket: ^2.0.0
   web_socket_channel: ^3.0.0
   network_info_plus: ^5.0.0
+
+  # --- Added for Full-Screen QR Pairing ---
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.2
 
 dev_dependencies:
   flutter_test:
