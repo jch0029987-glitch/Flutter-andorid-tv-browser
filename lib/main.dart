@@ -1,5 +1,8 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'virtual_mouse.dart';
 import 'update_service.dart';
@@ -183,8 +186,12 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
             debugPrint('WebView Error: ${error.description}');
           },
         ),
-      )
-      ..loadRequest(Uri.parse(_homeUrl));
+      );
+
+    // Load session cookies from local ADB file first, then load request
+    _loadCookiesFromFile().then((_) {
+      _controller.loadRequest(Uri.parse(_homeUrl));
+    });
 
     // Automatically check for GitHub updates silently right after launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -197,6 +204,35 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     _urlController.dispose();
     _urlFocusNode.dispose();
     super.dispose();
+  }
+
+  // Load session cookies pushed via ADB
+  Future<void> _loadCookiesFromFile() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/session_config.json');
+      
+      if (await file.exists()) {
+        final contents = await file.readAsString();
+        final data = jsonDecode(contents);
+        
+        final String cUser = data['c_user'] ?? '';
+        final String xs = data['xs'] ?? '';
+
+        if (cUser.isNotEmpty && xs.isNotEmpty) {
+          final cookieManager = WebViewCookieManager();
+          await cookieManager.setCookie(
+            WebViewCookie(name: 'c_user', value: cUser, domain: '.facebook.com', path: '/'),
+          );
+          await cookieManager.setCookie(
+            WebViewCookie(name: 'xs', value: xs, domain: '.facebook.com', path: '/'),
+          );
+          debugPrint('🍪 Loaded session cookies from local file via ADB!');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading local session file: $e');
+    }
   }
 
   // Toggle between Desktop and Mobile User Agents
