@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'update_service.dart';
 
 // WebSocket packages for phone-to-TV sync
@@ -59,7 +60,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   String _currentUrl = 'https://m.facebook.com/login';
   
   bool _isDesktopMode = false;
-  bool _isTvMouseMode = false;
+  bool _isTvMouseMode = false; // Will auto-enable if TV/Desktop is detected
   
   double _cursorX = 300;
   double _cursorY = 300;
@@ -75,6 +76,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   void initState() {
     super.initState();
     _urlController.text = _homeUrl;
+    _checkIfTvDevice(); // 📺 Auto-detect if running on TV or Desktop
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -209,6 +211,29 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     });
   }
 
+  Future<void> _checkIfTvDevice() async {
+    try {
+      if (Platform.isAndroid) {
+        final deviceInfo = DeviceInfoPlugin();
+        final androidInfo = await deviceInfo.androidInfo;
+        final bool isTv = androidInfo.systemFeatures.contains('android.software.leanback') ||
+                          androidInfo.systemFeatures.contains('com.google.android.tv');
+        if (isTv) {
+          setState(() {
+            _isTvMouseMode = true;
+          });
+          _showToast('📺 TV Detected: Mouse & D-Pad active');
+        }
+      } else if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        setState(() {
+          _isTvMouseMode = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('Device check error: $e');
+    }
+  }
+
   Future<void> _initAppSequence() async {
     await _requestStoragePermission();
     _controller.loadRequest(Uri.parse(_homeUrl));
@@ -298,7 +323,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                           builder: (context) => TvPairingScreen(
                             onSynced: (rawCookies) {
                               _injectCookieStringDirectly(rawCookies);
-                              _showToast('✅ Synced successfully from phone!');
                             },
                           ),
                         ),
@@ -390,7 +414,10 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         }
       }
     }
-    _controller.loadRequest(Uri.parse(_homeUrl));
+    
+    // 🚀 Auto-navigate to main feed/home after injection so session activates & auto-logs in instantly
+    _showToast('✅ Synced! Logging into TV session...');
+    _controller.loadRequest(Uri.parse('https://m.facebook.com/'));
   }
 
   Future<void> _loadCookiesFromFile() async {
@@ -453,7 +480,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
         if (injectedCount > 0) {
           _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
-          _controller.loadRequest(Uri.parse(_homeUrl));
+          _controller.loadRequest(Uri.parse('https://m.facebook.com/'));
         } else {
           _showToast('⚠ No valid cookies found in JSON');
           _controller.loadRequest(Uri.parse(_homeUrl));
