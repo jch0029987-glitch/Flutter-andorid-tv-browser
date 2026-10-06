@@ -68,9 +68,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   String? _toastMessage;
   
   static const String _desktopUserAgent = 
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-  static const String _mobileUserAgent = 
-      "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  static const String _believableMobileUserAgent = 
+      "Mozilla/5.0 (Linux; Android 10; SM-A505FN) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
 
   @override
   void initState() {
@@ -80,7 +80,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(_mobileUserAgent)
+      ..setUserAgent(_believableMobileUserAgent)
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (NavigationRequest request) {
@@ -89,6 +89,13 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
+          },
+          onPageStarted: (String url) {
+            _controller.runJavaScript('''
+              Object.defineProperty(navigator, 'webdriver', { get: () => false });
+              window.navigator.chrome = { runtime: {} };
+              Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            ''');
           },
           onPageFinished: (String url) async {
             final back = await _controller.canGoBack();
@@ -100,6 +107,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoForward = forward;
             });
 
+            // Universal Facebook detection (works for both phone & TV in mobile/desktop modes)
             if (url.contains('facebook.com')) {
               _controller.runJavaScript('''
                 (function() {
@@ -126,68 +134,88 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                     container.style.zIndex = '999999';
                     document.body.appendChild(container);
 
-                    function TVLoginHelper() {
+                    function UniversalLoginHelper() {
                       const [status, setStatus] = React.useState('Ready');
+                      const [savedUser, setSavedUser] = React.useState(window._tvUser || '');
+                      const [savedPass, setSavedPass] = React.useState(window._tvPass || '');
                       
                       React.useEffect(() => {
                         window._updateTvCredentials = (u, p) => {
+                          setSavedUser(u);
+                          setSavedPass(p);
                           setStatus('Credentials Loaded');
                         };
                       }, []);
 
-                      const fillInput = (selector, value) => {
-                        var field = document.querySelector(selector);
+                      const fillInput = (type, value) => {
+                        let field = null;
+                        
+                        if (type === 'email') {
+                          // Search multiple variations across mobile & desktop layouts
+                          field = document.querySelector('#email') || 
+                                  document.querySelector('input[name="email"]') || 
+                                  document.querySelector('input[type="email"]') ||
+                                  document.querySelector('input[name="identifier"]');
+                        } else if (type === 'pass') {
+                          field = document.querySelector('#pass') || 
+                                  document.querySelector('input[name="pass"]') || 
+                                  document.querySelector('input[type="password"]');
+                        }
+
                         if (!field) {
-                          setStatus('Field not found: ' + selector);
+                          setStatus('Input field not found!');
                           return;
                         }
 
                         field.focus();
                         var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                        nativeSetter.call(field, value);
+                        if (nativeSetter) {
+                          nativeSetter.call(field, value);
+                        } else {
+                          field.value = value;
+                        }
 
                         if (field._valueTracker) {
                           field._valueTracker.setValue(value);
                         }
 
-                        var inputEvent = new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value });
-                        field.dispatchEvent(inputEvent);
+                        field.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
                         field.dispatchEvent(new Event('change', { bubbles: true }));
-                        setStatus('Filled successfully');
+                        setStatus('Filled ' + type + ' successfully!');
                       };
 
                       return React.createElement('div', {
                         style: {
                           background: 'rgba(20, 20, 20, 0.95)',
                           color: '#00ffcc',
-                          padding: '12px',
+                          padding: '14px',
                           borderRadius: '12px',
                           fontFamily: 'sans-serif',
                           fontSize: '12px',
-                          boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-                          border: '1px solid #00ffcc',
-                          width: '210px'
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.8)',
+                          border: '2px solid #00ffcc',
+                          width: '235px'
                         }
                       }, [
-                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' } }, '📺/📱 Quick-Fill'),
+                        React.createElement('div', { key: 'title', style: { fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' } }, '🚀 Quick Login Assistant'),
                         React.createElement('div', { key: 'status', style: { color: '#ffffff', fontSize: '10px', marginBottom: '8px' } }, 'Status: ' + status),
                         
                         React.createElement('button', {
                           key: 'btn-email',
-                          onClick: () => fillInput('#email', window._tvUser || ''),
-                          style: { width: '100%', padding: '6px', marginBottom: '4px', background: '#1877f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
-                        }, '⚡ Fill Email/Phone'),
+                          onClick: () => fillInput('email', savedUser),
+                          style: { width: '100%', padding: '8px', marginBottom: '6px', background: '#1877f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }
+                        }, savedUser ? '⚡ Fill Email/Phone' : '⚠ Set Email First'),
 
                         React.createElement('button', {
                           key: 'btn-pass',
-                          onClick: () => fillInput('#pass', window._tvPass || ''),
-                          style: { width: '100%', padding: '6px', background: '#d93838', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }
-                        }, '⚡ Fill Password')
+                          onClick: () => fillInput('pass', savedPass),
+                          style: { width: '100%', padding: '8px', background: '#d93838', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }
+                        }, savedPass ? '⚡ Fill Password' : '⚠ Set Pass First')
                       ]);
                     }
 
                     const root = ReactDOM.createRoot(container);
-                    root.render(React.createElement(TVLoginHelper));
+                    root.render(React.createElement(UniversalLoginHelper));
                   }
                 })();
               ''');
@@ -287,7 +315,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         return AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.tv, color: Colors.cyanAccent, size: 28),
+              Icon(Icons.public, color: Colors.cyanAccent, size: 28),
               SizedBox(width: 12),
               Text('Browser Setup Menu'),
             ],
@@ -299,7 +327,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Welcome! Choose how you would like to load your session configuration:',
+                  'Choose how you want to proceed for manual or quick login:',
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
                 const SizedBox(height: 20),
@@ -366,11 +394,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                    icon: const Icon(Icons.folder_open),
-                    label: const Text('Load Local session_config.json', style: TextStyle(fontSize: 14)),
+                    icon: const Icon(Icons.vpn_key),
+                    label: const Text('Set Credentials for Quick-Fill', style: TextStyle(fontSize: 14)),
                     onPressed: () {
                       Navigator.pop(context);
-                      _loadCookiesFromFile();
+                      _showCredentialsDialog();
                     },
                   ),
                 ),
@@ -383,7 +411,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                     icon: const Icon(Icons.web),
-                    label: const Text('Skip / Browse Normally', style: TextStyle(fontSize: 14)),
+                    label: const Text('Proceed to Manual Login', style: TextStyle(fontSize: 14)),
                     onPressed: () {
                       Navigator.pop(context);
                     },
@@ -404,7 +432,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       final Map<String, dynamic> localStore = data['localStorage'] ?? {};
       final Map<String, dynamic> sessionStore = data['sessionStorage'] ?? {};
 
-      // 1. Restore Cookies via CookieManager
       final cookieManager = WebViewCookieManager();
       List<String> pairs = rawCookies.split(';');
       for (String pair in pairs) {
@@ -420,25 +447,28 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         }
       }
 
-      // 2. Setup navigation delegate to restore LocalStorage and SessionStorage upon reaching Facebook
       _controller.setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (NavigationRequest request) {
             if (_isAdOrTracker(request.url)) return NavigationDecision.prevent;
             return NavigationDecision.navigate;
           },
+          onPageStarted: (String url) {
+            _controller.runJavaScript('''
+              Object.defineProperty(navigator, 'webdriver', { get: () => false });
+              window.navigator.chrome = { runtime: {} };
+            ''');
+          },
           onPageFinished: (String url) async {
             if (url.contains('facebook.com')) {
               StringBuffer jsBuilder = StringBuffer();
 
-              // Rebuild LocalStorage items
               localStore.forEach((key, val) {
                 final sKey = key.replaceAll("'", "\\'");
                 final sVal = val.toString().replaceAll("'", "\\'");
                 jsBuilder.write("window.localStorage.setItem('$sKey', '$sVal');\n");
               });
 
-              // Rebuild SessionStorage items
               sessionStore.forEach((key, val) {
                 final sKey = key.replaceAll("'", "\\'");
                 final sVal = val.toString().replaceAll("'", "\\'");
@@ -461,93 +491,12 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     }
   }
 
-  Future<void> _loadCookiesFromFile() async {
-    try {
-      final List<String> possiblePaths = [
-        '/storage/emulated/0/Download/session_config.json',
-        '/storage/emulated/0/download/session_config.json',
-        '/sdcard/Download/session_config.json',
-        '/sdcard/download/session_config.json',
-      ];
-
-      File? targetFile;
-      for (final path in possiblePaths) {
-        try {
-          final file = File(path);
-          if (await file.exists()) {
-            targetFile = file;
-            break;
-          }
-        } catch (_) {}
-      }
-
-      if (targetFile != null) {
-        final contents = await targetFile.readAsString();
-        final decodedData = jsonDecode(contents);
-        
-        // Handle full profile json format if loaded from file
-        if (decodedData is Map && decodedData.containsKey('cookies')) {
-          _injectProfileDataDirectly(contents);
-          return;
-        }
-
-        // Fallback for older cookie-only json files
-        final cookieManager = WebViewCookieManager();
-        List<dynamic> cookiesList = [];
-
-        if (decodedData is List) {
-          cookiesList = decodedData;
-        } else if (decodedData is Map) {
-          decodedData.forEach((key, value) {
-            cookiesList.add({'name': key, 'value': value, 'domain': '.facebook.com', 'path': '/'});
-          });
-        }
-
-        int injectedCount = 0;
-        for (var cookieData in cookiesList) {
-          final String name = cookieData['name'] ?? '';
-          final String value = cookieData['value'] ?? '';
-          String domain = cookieData['domain'] ?? '.facebook.com';
-          final String path = cookieData['path'] ?? '/';
-
-          if (name.isNotEmpty && value.isNotEmpty) {
-            if (domain.contains('facebook.com')) {
-              domain = '.facebook.com';
-            } else if (!domain.startsWith('.')) {
-              domain = '.$domain';
-            }
-
-            await cookieManager.setCookie(
-              WebViewCookie(name: name, value: value, domain: domain, path: path),
-            );
-            injectedCount++;
-          }
-        }
-
-        if (injectedCount > 0) {
-          _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
-          _controller.loadRequest(Uri.parse('https://m.facebook.com/'));
-        } else {
-          _showToast('⚠ No valid cookies found in JSON');
-          _controller.loadRequest(Uri.parse(_homeUrl));
-        }
-      } else {
-        _showToast('⚠️ session_config.json not found in Download');
-        _controller.loadRequest(Uri.parse(_homeUrl));
-      }
-    } catch (e) {
-      debugPrint('Error loading local session file: $e');
-      _showToast('❌ Error loading cookies');
-      _controller.loadRequest(Uri.parse(_homeUrl));
-    }
-  }
-
   void _toggleDesktopMode() async {
     setState(() {
       _isDesktopMode = !_isDesktopMode;
     });
 
-    final targetUserAgent = _isDesktopMode ? _desktopUserAgent : _mobileUserAgent;
+    final targetUserAgent = _isDesktopMode ? _desktopUserAgent : _believableMobileUserAgent;
     await _controller.setUserAgent(targetUserAgent);
     _controller.reload();
   }
@@ -569,6 +518,11 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const Text(
+              'Enter your credentials here so the floating Quick-Fill assistant can populate them on both phone and TV.',
+              style: TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: userController,
               decoration: const InputDecoration(labelText: 'Email or Phone'),
@@ -590,8 +544,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
             onPressed: () {
               Navigator.pop(context);
               _injectCredentialsIntoReact(userController.text, passController.text);
+              _showToast('✅ Credentials updated for Quick-Fill!');
             },
-            child: const Text('Save & Inject'),
+            child: const Text('Save Credentials'),
           ),
         ],
       ),
@@ -852,9 +807,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   }
 }
 
-// =========================================================================
-// Dedicated Full-Screen TV Hosting Screen (Displays Large QR Code & Server)
-// =========================================================================
 class TvPairingScreen extends StatefulWidget {
   final Function(String) onSynced;
   const TvPairingScreen({super.key, required this.onSynced});
@@ -878,25 +830,14 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
   Future<void> _startServer() async {
     try {
       await Permission.location.request();
-
       final info = NetworkInfo();
-      String? ip;
-      try {
-        ip = await info.getWifiIP();
-      } catch (e) {
-        debugPrint('NetworkInfo error: $e');
-      }
-
+      String? ip = await info.getWifiIP().catchError((_) => null);
       ip ??= '192.168.1.100';
       const int port = 8080;
       _wsAddress = 'ws://$ip:$port';
 
       var handler = webSocketHandler((WebSocketChannel webSocket) {
-        if (mounted) {
-          setState(() {
-            _isConnected = true;
-          });
-        }
+        if (mounted) setState(() => _isConnected = true);
         webSocket.stream.listen((message) async {
           try {
             widget.onSynced(message.toString());
@@ -910,17 +851,9 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
       });
 
       _server = await shelf_io.serve(handler, '0.0.0.0', port);
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
     } catch (e) {
-      debugPrint('Failed to start server: $e');
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _wsAddress = 'Server Error: $e';
-        });
-      }
+      if (mounted) setState(() { _hasError = true; _wsAddress = 'Server Error: $e'; });
     }
   }
 
@@ -933,87 +866,41 @@ class _TvPairingScreenState extends State<TvPairingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('TV Companion Hosting Mode'),
-        backgroundColor: Colors.black,
-      ),
+      appBar: AppBar(title: const Text('TV Hosting Mode'), backgroundColor: Colors.black),
       backgroundColor: Colors.grey[900],
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
-          child: _hasError
-              ? Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
-                    const SizedBox(height: 16),
-                    Text(
-                      _wsAddress,
-                      style: const TextStyle(fontSize: 16, color: Colors.white),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                )
-              : Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text(
-                      'Scan this QR code with your phone app to sync profile:',
-                      style: TextStyle(fontSize: 18, color: Colors.white70),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 24),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: SizedBox(
-                        width: 220,
-                        height: 220,
-                        child: QrImageView(
-                          data: _wsAddress,
-                          version: QrVersions.auto,
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    SelectableText(
-                      _wsAddress, 
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      _isConnected ? '✅ Connected! Processing sync...' : '⏳ Waiting for incoming phone connection...',
-                      style: TextStyle(
-                        fontSize: 15, 
-                        color: _isConnected ? Colors.greenAccent : Colors.orangeAccent,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Scan this QR code with your phone app to sync profile:', style: TextStyle(fontSize: 18, color: Colors.white70), textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                child: SizedBox(
+                  width: 220, height: 220,
+                  child: QrImageView(data: _wsAddress, version: QrVersions.auto, backgroundColor: Colors.white, foregroundColor: Colors.black),
                 ),
+              ),
+              const SizedBox(height: 24),
+              SelectableText(_wsAddress, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
+              const SizedBox(height: 16),
+              Text(_isConnected ? '✅ Connected!' : '⏳ Waiting for incoming connection...', style: TextStyle(fontSize: 15, color: _isConnected ? Colors.greenAccent : Colors.orangeAccent)),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// =========================================================================
-// Dedicated Full-Screen Phone Scanner Screen (Camera QR Code Reader)
-// =========================================================================
 class PhonePairingScreen extends StatefulWidget {
   final WebViewController webController;
   final Function(String) showToast;
 
-  const PhonePairingScreen({
-    super.key, 
-    required this.webController, 
-    required this.showToast,
-  });
+  const PhonePairingScreen({super.key, required this.webController, required this.showToast});
 
   @override
   State<PhonePairingScreen> createState() => _PhonePairingScreenState();
@@ -1033,12 +920,7 @@ class _PhonePairingScreenState extends State<PhonePairingScreen> {
 
   Future<void> _checkCameraPermission() async {
     final status = await Permission.camera.request();
-    setState(() {
-      _hasPermission = status.isGranted;
-    });
-    if (!status.isGranted) {
-      widget.showToast('⚠️ Camera permission is required to scan QR codes');
-    }
+    setState(() => _hasPermission = status.isGranted);
   }
 
   @override
@@ -1050,27 +932,18 @@ class _PhonePairingScreenState extends State<PhonePairingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scan TV QR Code'),
-        backgroundColor: Colors.black,
-      ),
+      appBar: AppBar(title: const Text('Scan TV QR Code'), backgroundColor: Colors.black),
       body: _hasPermission
           ? MobileScanner(
               controller: _scannerController,
               onDetect: (capture) async {
                 if (_hasScanned) return;
-                
-                final List<Barcode> barcodes = capture.barcodes;
-                for (final barcode in barcodes) {
+                for (final barcode in capture.barcodes) {
                   final String? rawValue = barcode.rawValue;
-                  if (rawValue != null && (rawValue.startsWith('ws://') || rawValue.startsWith('wss://'))) {
+                  if (rawValue != null && rawValue.startsWith('ws://')) {
                     _hasScanned = true;
                     await _scannerController.stop();
-                    
-                    if (mounted) {
-                      Navigator.pop(context);
-                    }
-                    
+                    if (mounted) Navigator.pop(context);
                     _sendBrowserProfileOverWebSocket(rawValue);
                     return;
                   }
@@ -1078,86 +951,43 @@ class _PhonePairingScreenState extends State<PhonePairingScreen> {
               },
             )
           : Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.camera_alt, size: 64, color: Colors.grey),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Camera permission is needed to scan the QR code.',
-                      style: TextStyle(color: Colors.white70, fontSize: 16),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-                      onPressed: _checkCameraPermission,
-                      child: const Text('Grant Permission'),
-                    ),
-                  ],
-                ),
-              ),
+              child: ElevatedButton(onPressed: _checkCameraPermission, child: const Text('Grant Camera Permission')),
             ),
     );
   }
 
   Future<void> _sendBrowserProfileOverWebSocket(String wsUrl) async {
     try {
-      // Deep profile capture script: grabs Cookies, LocalStorage, and SessionStorage
       final profileScript = '''
         (function() {
-          var profile = {
-            cookies: document.cookie,
-            localStorage: {},
-            sessionStorage: {}
-          };
-
+          var profile = { cookies: document.cookie, localStorage: {}, sessionStorage: {} };
           for (var i = 0; i < localStorage.length; i++) {
-            var key = localStorage.key(i);
-            profile.localStorage[key] = localStorage.getItem(key);
+            profile.localStorage[localStorage.key(i)] = localStorage.getItem(localStorage.key(i));
           }
-
           for (var j = 0; j < sessionStorage.length; j++) {
-            var sKey = sessionStorage.key(j);
-            profile.sessionStorage[sKey] = sessionStorage.getItem(sKey);
+            profile.sessionStorage[sessionStorage.key(j)] = sessionStorage.getItem(sessionStorage.key(j));
           }
-
           return JSON.stringify(profile);
         })();
       ''';
 
       final result = await widget.webController.runJavaScriptReturningResult(profileScript);
       String cleanJson = result.toString();
-      
       if (cleanJson.startsWith('"') && cleanJson.endsWith('"')) {
-        cleanJson = cleanJson.substring(1, cleanJson.length - 1)
-            .replaceAll(r'\"', '"')
-            .replaceAll(r'\\', '\\');
-      }
-
-      if (cleanJson.isEmpty || cleanJson == 'null') {
-        widget.showToast('⚠ No active browser profile found to push');
-        return;
+        cleanJson = cleanJson.substring(1, cleanJson.length - 1).replaceAll(r'\"', '"').replaceAll(r'\\', '\\');
       }
 
       final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       channel.sink.add(cleanJson);
-      widget.showToast('📤 Pushing full browser profile to TV...');
-
+      widget.showToast('📤 Pushing profile to TV...');
       channel.stream.listen((message) {
         if (message.toString() == 'SUCCESS') {
-          widget.showToast('✅ Profile successfully pushed to TV!');
+          widget.showToast('✅ Profile pushed successfully!');
           channel.sink.close();
         }
-      }, onError: (error) {
-        widget.showToast('❌ Sync connection error');
-        debugPrint('WS Error: $error');
       });
     } catch (e) {
-      debugPrint('Error sending profile: $e');
-      widget.showToast('❌ Failed to connect to TV address');
+      widget.showToast('❌ Failed to connect to TV');
     }
   }
 }
