@@ -7,6 +7,12 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'update_service.dart'; // Imported separately
 
+// WebSocket packages for phone-to-TV sync
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_web_socket/shelf_web_socket.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:network_info_plus/network_info_plus.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const FlutterBrowserNextApp());
@@ -55,6 +61,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   double _cursorY = 300;
 
   String? _toastMessage;
+  HttpServer? _tvServer;
   
   static const String _desktopUserAgent = 
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -193,13 +200,17 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
       try {
         UpdateService.checkForUpdates(context, silent: true);
       } catch (_) {}
+      
+      // Show startup setup menu immediately on app launch
+      _showStartupSetupMenu(context);
+      
       FocusScope.of(context).requestFocus(_appFocusNode);
     });
   }
 
   Future<void> _initAppSequence() async {
     await _requestStoragePermission();
-    await _loadCookiesFromFile();
+    _controller.loadRequest(Uri.parse(_homeUrl));
   }
 
   @override
@@ -207,6 +218,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     _urlController.dispose();
     _urlFocusNode.dispose();
     _appFocusNode.dispose();
+    _tvServer?.close();
     super.dispose();
   }
 
@@ -240,6 +252,181 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     } catch (e) {
       debugPrint('Permission request error: $e');
     }
+  }
+
+  // --- Startup Setup Menu ---
+  void _showStartupSetupMenu(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.tv, color: Colors.cyanAccent, size: 28),
+              SizedBox(width: 12),
+              Text('Browser Setup Menu'),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Welcome! Choose how you would like to load your session configuration:',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+
+                // Option 1: Sync with Phone (WebSocket)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    autofocus: true, // Automatically focused for TV remote D-pad!
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueAccent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.phone_android),
+                    label: const Text('Sync Session with Phone', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _startTvSyncServer(context);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // Option 2: Load Local File (session_config.json)
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.cyanAccent),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Load Local session_config.json', style: TextStyle(fontSize: 14)),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _loadCookiesFromFile();
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // Option 3: Skip / Browse Normally
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.grey,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.web),
+                    label: const Text('Skip / Browse Normally', style: TextStyle(fontSize: 14)),
+                    onPressed: () {
+                      Navigator.pop(context);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // --- WebSocket Server Logic for TV Sync ---
+  void _startTvSyncServer(BuildContext context) async {
+    try {
+      final info = NetworkInfo();
+      String? ip = await info.getWifiIP();
+      ip ??= '192.168.1.x';
+      const int port = 8080;
+
+      var handler = webSocketHandler((WebSocketChannel webSocket) {
+        debugPrint('📱 Phone connected to TV WebSocket!');
+        webSocket.stream.listen((message) async {
+          try {
+            await _injectCookieStringDirectly(message.toString());
+            _showToast('✅ Synced successfully from phone!');
+            webSocket.sink.add('SUCCESS');
+            _tvServer?.close();
+          } catch (e) {
+            debugPrint('Error parsing synced cookies: $e');
+          }
+        });
+      });
+
+      _tvServer = await shelf_io.serve(handler, '0.0.0.0', port);
+      
+      if (context.mounted) {
+        _showPairingDialog(context, 'ws://$ip:$port');
+      }
+    } catch (e) {
+      debugPrint('Failed to start TV WebSocket server: $e');
+      _showToast('❌ Could not start local server');
+    }
+  }
+
+  void _showPairingDialog(BuildContext context, String wsAddress) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        title: const Text('📺 TV Companion Pairing'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Type this address into your phone companion app to sync login:'),
+            const SizedBox(height: 12),
+            SelectableText(
+              wsAddress, 
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
+            ),
+            const SizedBox(height: 12),
+            const Text('Waiting for phone connection...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _tvServer?.close();
+              Navigator.pop(context);
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _injectCookieStringDirectly(String rawCookies) async {
+    final cookieManager = WebViewCookieManager();
+    List<String> pairs = rawCookies.split(';');
+
+    for (String pair in pairs) {
+      List<String> parts = pair.split('=');
+      if (parts.length >= 2) {
+        String name = parts[0].trim();
+        String value = parts.sublist(1).join('=').trim();
+
+        if (name.isNotEmpty && value.isNotEmpty) {
+          await cookieManager.setCookie(
+            WebViewCookie(name: name, value: value, domain: '.facebook.com', path: '/'),
+          );
+        }
+      }
+    }
+    _controller.loadRequest(Uri.parse(_homeUrl));
   }
 
   Future<void> _loadCookiesFromFile() async {
@@ -304,7 +491,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
           _controller.loadRequest(Uri.parse(_homeUrl));
         } else {
-          _showToast('⚠️ No valid cookies found in JSON');
+          _showToast('⚠️️ No valid cookies found in JSON');
           _controller.loadRequest(Uri.parse(_homeUrl));
         }
       } else {
