@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:file_picker/file_picker.dart'; // <--- Corrected package import
+import 'package:file_selector/file_selector.dart'; // <--- Swapped to file_selector
 import 'update_service.dart';
 
 // WebSocket packages for phone-to-TV sync
@@ -305,15 +305,16 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
   Future<void> _importJsFile() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['js'],
+      const XTypeGroup typeGroup = XTypeGroup(
+        label: 'JavaScript Files',
+        extensions: ['js'],
       );
+      
+      final XFile? file = await openFile(acceptedTypeGroups: [typeGroup]);
 
-      if (result != null && result.files.single.path != null) {
-        File pickedFile = File(result.files.single.path!);
-        String fileName = result.files.single.name;
-        String fileContent = await pickedFile.readAsString();
+      if (file != null) {
+        String fileName = file.name;
+        String fileContent = await file.readAsString();
 
         final directory = await getApplicationDocumentsDirectory();
         final extDir = Directory('${directory.path}/extensions');
@@ -338,7 +339,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween, // <--- Corrected alignment
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text('Extensions'),
                   IconButton(
