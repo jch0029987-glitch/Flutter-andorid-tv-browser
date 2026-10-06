@@ -54,6 +54,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   // Virtual Cursor Coordinates for TV Mode
   double _cursorX = 300;
   double _cursorY = 300;
+
+  // Toast Notification State
+  String? _toastMessage;
   
   static const String _desktopUserAgent = 
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -186,6 +189,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       );
 
+    // Await loading the cookies from the file system *before* requesting the home URL
     _loadCookiesFromFile().then((_) {
       _controller.loadRequest(Uri.parse(_homeUrl));
     });
@@ -206,14 +210,41 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     super.dispose();
   }
 
+  void _showToast(String message) {
+    if (!mounted) return;
+    setState(() {
+      _toastMessage = message;
+    });
+    Future.delayed(const Duration(seconds: 4), () {
+      if (mounted && _toastMessage == message) {
+        setState(() {
+          _toastMessage = null;
+        });
+      }
+    });
+  }
+
   Future<void> _loadCookiesFromFile() async {
     try {
-      final directory = await getExternalStorageDirectory();
-      if (directory == null) return;
-      
-      final file = File('${directory.path}/Download/session_config.json');
-      if (await file.exists()) {
-        final contents = await file.readAsString();
+      final List<String> possiblePaths = [
+        '/storage/emulated/0/Download/session_config.json',
+        '/storage/emulated/0/download/session_config.json',
+        '/sdcard/Download/session_config.json',
+        '/sdcard/download/session_config.json',
+      ];
+
+      File? targetFile;
+      for (final path in possiblePaths) {
+        final file = File(path);
+        if (await file.exists()) {
+          targetFile = file;
+          debugPrint('📁 Found session file at: $path');
+          break;
+        }
+      }
+
+      if (targetFile != null && await targetFile.exists()) {
+        final contents = await targetFile.readAsString();
         final data = jsonDecode(contents);
         
         final String cUser = data['c_user'] ?? '';
@@ -227,10 +258,18 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           await cookieManager.setCookie(
             WebViewCookie(name: 'xs', value: xs, domain: '.facebook.com', path: '/'),
           );
+          debugPrint('🍪 Loaded session cookies successfully!');
+          _showToast('🍪 Cookies Loaded!\nc_user: $cUser');
+        } else {
+          _showToast('⚠️ session_config.json missing c_user or xs');
         }
+      } else {
+        debugPrint('session_config.json not found in any standard Download path.');
+        _showToast('⚠️ session_config.json not found in Download');
       }
     } catch (e) {
       debugPrint('Error loading local session file: $e');
+      _showToast('❌ Error loading cookies: $e');
     }
   }
 
@@ -493,6 +532,41 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                               ),
                               child: const Center(
                                 child: Icon(Icons.navigation, size: 12, color: Colors.black),
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (_toastMessage != null)
+                        Positioned(
+                          bottom: 30,
+                          left: 40,
+                          right: 40,
+                          child: Center(
+                            child: Material(
+                              color: Colors.transparent,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.9),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: Colors.cyanAccent, width: 1.5),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.6),
+                                      blurRadius: 10,
+                                      spreadRadius: 2,
+                                    ),
+                                  ],
+                                ),
+                                child: Text(
+                                  _toastMessage!,
+                                  style: const TextStyle(
+                                    color: Colors.cyanAccent,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
                               ),
                             ),
                           ),
