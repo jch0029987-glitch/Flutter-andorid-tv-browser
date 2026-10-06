@@ -36,7 +36,7 @@ dependencies:
   mobile_scanner: ^7.4.2
 
   # --- Added for File Picker Support ---
-  file_picker: ^8.0.6
+  file_picker: ^8.1.4
 
 dev_dependencies:
   flutter_test:
