@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'update_service.dart';
+import 'update_service.dart'; // Imported separately
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,20 +43,17 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   final FocusNode _urlFocusNode = FocusNode();
   final FocusNode _appFocusNode = FocusNode();
   
-  final String _homeUrl = 'https://www.facebook.com/login';
+  final String _homeUrl = 'https://m.facebook.com/login';
   bool _canGoBack = false;
   bool _canGoForward = false;
-  String _currentUrl = 'https://www.facebook.com/login';
+  String _currentUrl = 'https://m.facebook.com/login';
   
-  // Modes State
   bool _isDesktopMode = false;
   bool _isTvMouseMode = false;
   
-  // Virtual Cursor Coordinates for TV Mode
   double _cursorX = 300;
   double _cursorY = 300;
 
-  // Toast Notification State
   String? _toastMessage;
   
   static const String _desktopUserAgent = 
@@ -91,20 +88,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoForward = forward;
             });
 
-            // --- INJECT MOBILE DEVTOOLS (ERUDA) VIA CDN ---
-            await _controller.runJavaScript('''
-              (function () {
-                if (window._erudaInjected) return;
-                window._erudaInjected = true;
-                var script = document.createElement('script');
-                script.src = "https://cdn.jsdelivr.net/npm/eruda";
-                script.onload = function () { 
-                  eruda.init(); 
-                };
-                document.body.appendChild(script);
-              })();
-            ''');
-
             if (url.contains('facebook.com')) {
               _controller.runJavaScript('''
                 (function() {
@@ -126,7 +109,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                     var container = document.createElement('div');
                     container.id = 'tv-react-helper-root';
                     container.style.position = 'fixed';
-                    container.style.bottom = '75px'; // Offset to avoid overlapping Eruda button
+                    container.style.bottom = '20px';
                     container.style.right = '20px';
                     container.style.zIndex = '999999';
                     document.body.appendChild(container);
@@ -204,7 +187,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       );
 
-    // Initialize startup sequence
     _initAppSequence();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -218,7 +200,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   Future<void> _initAppSequence() async {
     await _requestStoragePermission();
     await _loadCookiesFromFile();
-    _controller.loadRequest(Uri.parse(_homeUrl));
   }
 
   @override
@@ -252,7 +233,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         }
         
         if (!status.isGranted) {
-          debugPrint('⚠️ Manage External Storage not granted. Opening settings...');
           _showToast('⚠️ Please grant "All files access" for Downloads');
           await openAppSettings();
         }
@@ -289,7 +269,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         final cookieManager = WebViewCookieManager();
         List<dynamic> cookiesList = [];
 
-        // Dynamic parser for multi-cookie array maps
         if (decodedData is List) {
           cookiesList = decodedData;
         } else if (decodedData is Map && decodedData.containsKey('cookies')) {
@@ -308,7 +287,9 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           final String path = cookieData['path'] ?? '/';
 
           if (name.isNotEmpty && value.isNotEmpty) {
-            if (!domain.startsWith('.')) {
+            if (domain.contains('facebook.com')) {
+              domain = '.facebook.com';
+            } else if (!domain.startsWith('.')) {
               domain = '.$domain';
             }
 
@@ -320,18 +301,20 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         }
 
         if (injectedCount > 0) {
-          debugPrint('🍪 Successfully injected $injectedCount cookies!');
           _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
-          _controller.reload();
+          _controller.loadRequest(Uri.parse(_homeUrl));
         } else {
           _showToast('⚠️ No valid cookies found in JSON');
+          _controller.loadRequest(Uri.parse(_homeUrl));
         }
       } else {
         _showToast('⚠️ session_config.json not found in Download');
+        _controller.loadRequest(Uri.parse(_homeUrl));
       }
     } catch (e) {
       debugPrint('Error loading local session file: $e');
-      _showToast('❌ Error loading cookies: $e');
+      _showToast('❌ Error loading cookies');
+      _controller.loadRequest(Uri.parse(_homeUrl));
     }
   }
 
@@ -477,7 +460,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) async {
+      onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         
         if (await _controller.canGoBack()) {
