@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'file_picker.dart'; // <--- Added File Picker package
+import 'package:file_picker/file_picker.dart'; // <--- Corrected package import
 import 'update_service.dart';
 
 // WebSocket packages for phone-to-TV sync
@@ -338,7 +338,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: Row(
-                mainAxisAlignment: MainAxisAlignment.between,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween, // <--- Corrected alignment
                 children: [
                   const Text('Extensions'),
                   IconButton(
