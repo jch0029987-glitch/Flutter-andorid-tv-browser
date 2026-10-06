@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'update_service.dart';
 
 void main() {
@@ -231,11 +232,19 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   Future<void> _requestStoragePermission() async {
     try {
       if (Platform.isAndroid) {
-        await Process.run('pm', ['grant', 'com.flutterbrowser.flutter_browser_next', 'android.permission.READ_EXTERNAL_STORAGE']);
-        await Process.run('pm', ['grant', 'com.flutterbrowser.flutter_browser_next', 'android.permission.WRITE_EXTERNAL_STORAGE']);
+        var status = await Permission.manageExternalStorage.status;
+        if (!status.isGranted) {
+          status = await Permission.manageExternalStorage.request();
+        }
+        
+        if (!status.isGranted) {
+          debugPrint('⚠️ Manage External Storage not granted. Opening settings...');
+          _showToast('⚠️ Please grant "All files access" for Downloads');
+          await openAppSettings();
+        }
       }
     } catch (e) {
-      debugPrint('Runtime permission shell hook notice: $e');
+      debugPrint('Permission request error: $e');
     }
   }
 
