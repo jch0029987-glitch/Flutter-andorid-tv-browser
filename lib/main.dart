@@ -5,13 +5,17 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'update_service.dart'; // Imported separately
+import 'update_service.dart';
 
 // WebSocket packages for phone-to-TV sync
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+
+// QR Code packages
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -61,7 +65,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
   double _cursorY = 300;
 
   String? _toastMessage;
-  HttpServer? _tvServer;
   
   static const String _desktopUserAgent = 
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -201,9 +204,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         UpdateService.checkForUpdates(context, silent: true);
       } catch (_) {}
       
-      // Show startup setup menu immediately on app launch
       _showStartupSetupMenu(context);
-      
       FocusScope.of(context).requestFocus(_appFocusNode);
     });
   }
@@ -218,7 +219,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     _urlController.dispose();
     _urlFocusNode.dispose();
     _appFocusNode.dispose();
-    _tvServer?.close();
     super.dispose();
   }
 
@@ -254,7 +254,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
     }
   }
 
-  // --- Startup Setup Menu ---
   void _showStartupSetupMenu(BuildContext context) {
     showDialog(
       context: context,
@@ -279,8 +278,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
                 const SizedBox(height: 20),
-
-                // Option 1: Sync with Phone (WebSocket Server)
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -291,17 +288,51 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                    icon: const Icon(Icons.phone_android),
-                    label: const Text('Sync Session with Phone', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    icon: const Icon(Icons.tv),
+                    label: const Text('TV Hosting Mode (Show QR)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                     onPressed: () {
                       Navigator.pop(context);
-                      _startTvSyncServer(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => TvPairingScreen(
+                            onSynced: (rawCookies) {
+                              _injectCookieStringDirectly(rawCookies);
+                              _showToast('✅ Synced successfully from phone!');
+                            },
+                          ),
+                        ),
+                      );
                     },
                   ),
                 ),
                 const SizedBox(height: 10),
-
-                // Option 2: Load Local File (session_config.json)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green[700],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('Phone Push Mode (Scan QR)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PhonePairingScreen(
+                            webController: _controller,
+                            showToast: _showToast,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
@@ -320,8 +351,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-
-                // Option 3: Skip / Browse Normally
                 SizedBox(
                   width: double.infinity,
                   child: TextButton.icon(
@@ -342,177 +371,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         );
       },
     );
-  }
-
-  // --- WebSocket Server Logic for TV Sync ---
-  void _startTvSyncServer(BuildContext context) async {
-    try {
-      final info = NetworkInfo();
-      String? ip = await info.getWifiIP();
-      ip ??= '192.168.1.x';
-      const int port = 8080;
-
-      var handler = webSocketHandler((WebSocketChannel webSocket) {
-        debugPrint('📱 Phone connected to TV WebSocket!');
-        webSocket.stream.listen((message) async {
-          try {
-            await _injectCookieStringDirectly(message.toString());
-            _showToast('✅ Synced successfully from phone!');
-            webSocket.sink.add('SUCCESS');
-            _tvServer?.close();
-          } catch (e) {
-            debugPrint('Error parsing synced cookies: $e');
-          }
-        });
-      });
-
-      _tvServer = await shelf_io.serve(handler, '0.0.0.0', port);
-      
-      if (context.mounted) {
-        _showPairingDialog(context, 'ws://$ip:$port');
-      }
-    } catch (e) {
-      debugPrint('Failed to start TV WebSocket server: $e');
-      _showToast('❌ Could not start local server');
-    }
-  }
-
-  void _showPairingDialog(BuildContext context, String wsAddress) {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        title: const Text('📺 TV Companion Pairing'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Type this address into your phone companion app to sync login:'),
-            const SizedBox(height: 12),
-            SelectableText(
-              wsAddress, 
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
-            ),
-            const SizedBox(height: 12),
-            const Text('Waiting for phone connection...', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 20),
-            // Optional helper button if testing on the phone itself
-            OutlinedButton.icon(
-              icon: const Icon(Icons.send),
-              label: const Text('Simulate Push from Phone'),
-              onPressed: () {
-                Navigator.pop(context);
-                _showPushDialog(context);
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              _tvServer?.close();
-              Navigator.pop(context);
-            },
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- Phone-Side Push Dialog with ws:// Support ---
-  void _showPushDialog(BuildContext context) {
-    final TextEditingController ipController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('🚀 Push Session to TV'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter the address shown on your Android TV:'),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ipController,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                hintText: 'ws://192.168.1.50:8080',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context), 
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              String input = ipController.text.trim();
-              Navigator.pop(context);
-
-              // Strip invalid HTTP protocols if phone keyboard forced them
-              input = input.replaceAll('https://', '');
-              input = input.replaceAll('http://', '');
-              
-              if (input.endsWith('/')) {
-                input = input.substring(0, input.length - 1);
-              }
-
-              // Preserve ws:// or wss:// if provided, otherwise default to ws://
-              String finalWsUrl;
-              if (input.startsWith('ws://') || input.startsWith('wss://')) {
-                finalWsUrl = input;
-              } else {
-                finalWsUrl = 'ws://$input';
-              }
-
-              await _sendCookiesOverWebSocket(finalWsUrl);
-            },
-            child: const Text('Connect & Sync'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _sendCookiesOverWebSocket(String wsUrl) async {
-    try {
-      // 1. Grab current cookies from WebView JavaScript context
-      final cookiesString = await _controller.runJavaScriptReturningResult('document.cookie');
-      String cleanCookies = cookiesString.toString();
-      
-      // Strip potential wrapping quotes from JS evaluation output
-      if (cleanCookies.startsWith('"') && cleanCookies.endsWith('"')) {
-        cleanCookies = cleanCookies.substring(1, cleanCookies.length - 1);
-      }
-
-      if (cleanCookies.isEmpty || cleanCookies == 'null') {
-        _showToast('⚠️️ No active cookies found to push');
-        return;
-      }
-
-      // 2. Open WebSocket channel to TV
-      final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-      
-      // Send the cookie payload
-      channel.sink.add(cleanCookies);
-      _showToast('📤 Pushing session to TV...');
-
-      // Listen for acknowledgement
-      channel.stream.listen((message) {
-        if (message.toString() == 'SUCCESS') {
-          _showToast('✅ Successfully pushed to TV!');
-          channel.sink.close();
-        }
-      }, onError: (error) {
-        _showToast('❌ Sync connection error');
-        debugPrint('WS Error: $error');
-      });
-    } catch (e) {
-      debugPrint('Error sending cookies: $e');
-      _showToast('❌ Failed to connect to TV address');
-    }
   }
 
   Future<void> _injectCookieStringDirectly(String rawCookies) async {
@@ -597,7 +455,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
           _controller.loadRequest(Uri.parse(_homeUrl));
         } else {
-          _showToast('⚠️️ No valid cookies found in JSON');
+          _showToast('⚠ No valid cookies found in JSON');
           _controller.loadRequest(Uri.parse(_homeUrl));
         }
       } else {
@@ -918,5 +776,196 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       ),
     );
+  }
+}
+
+// =========================================================================
+// Dedicated Full-Screen TV Hosting Screen (Displays Large QR Code & Server)
+// =========================================================================
+class TvPairingScreen extends StatefulWidget {
+  final Function(String) onSynced;
+  const TvPairingScreen({super.key, required this.onSynced});
+
+  @override
+  State<TvPairingScreen> createState() => _TvPairingScreenState();
+}
+
+class _TvPairingScreenState extends State<TvPairingScreen> {
+  HttpServer? _server;
+  String _wsAddress = 'Initializing network...';
+  bool _isConnected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startServer();
+  }
+
+  Future<void> _startServer() async {
+    try {
+      final info = NetworkInfo();
+      String? ip = await info.getWifiIP();
+      ip ??= '192.168.1.x';
+      const int port = 8080;
+      _wsAddress = 'ws://$ip:$port';
+
+      var handler = webSocketHandler((WebSocketChannel webSocket) {
+        setState(() {
+          _isConnected = true;
+        });
+        webSocket.stream.listen((message) async {
+          try {
+            widget.onSynced(message.toString());
+            webSocket.sink.add('SUCCESS');
+            await Future.delayed(const Duration(milliseconds: 600));
+            if (mounted) Navigator.pop(context);
+          } catch (e) {
+            debugPrint('Error syncing: $e');
+          }
+        });
+      });
+
+      _server = await shelf_io.serve(handler, '0.0.0.0', port);
+      setState(() {});
+    } catch (e) {
+      debugPrint('Failed to start server: $e');
+      setState(() {
+        _wsAddress = 'Error starting local server';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _server?.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('TV Companion Hosting Mode'),
+        backgroundColor: Colors.black,
+      ),
+      backgroundColor: Colors.grey[900],
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'Scan this QR code with your phone app to sync session:',
+                style: TextStyle(fontSize: 18, color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SizedBox(
+                  width: 220,
+                  height: 220,
+                  child: QrImageView(
+                    data: _wsAddress,
+                    version: QrVersions.auto,
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              SelectableText(
+                _wsAddress, 
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _isConnected ? '✅ Connected! Processing sync...' : '⏳ Waiting for incoming phone connection...',
+                style: TextStyle(
+                  fontSize: 15, 
+                  color: _isConnected ? Colors.greenAccent : Colors.orangeAccent,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// =========================================================================
+// Dedicated Full-Screen Phone Scanner Screen (Camera QR Code Reader)
+// =========================================================================
+class PhonePairingScreen extends StatelessWidget {
+  final WebViewController webController;
+  final Function(String) showToast;
+
+  const PhonePairingScreen({
+    super.key, 
+    required this.webController, 
+    required this.showToast,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scan TV QR Code'),
+        backgroundColor: Colors.black,
+      ),
+      body: MobileScanner(
+        onDetect: (capture) {
+          final List<Barcode> barcodes = capture.barcodes;
+          for (final barcode in barcodes) {
+            final String? rawValue = barcode.rawValue;
+            if (rawValue != null && (rawValue.startsWith('ws://') || rawValue.startsWith('wss://'))) {
+              Navigator.pop(context);
+              _sendCookiesOverWebSocket(rawValue);
+              return;
+            }
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> _sendCookiesOverWebSocket(String wsUrl) async {
+    try {
+      final cookiesString = await webController.runJavaScriptReturningResult('document.cookie');
+      String cleanCookies = cookiesString.toString();
+      
+      if (cleanCookies.startsWith('"') && cleanCookies.endsWith('"')) {
+        cleanCookies = cleanCookies.substring(1, cleanCookies.length - 1);
+      }
+
+      if (cleanCookies.isEmpty || cleanCookies == 'null') {
+        showToast('⚠ No active cookies found to push');
+        return;
+      }
+
+      final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      channel.sink.add(cleanCookies);
+      showToast('📤 Pushing session to TV...');
+
+      channel.stream.listen((message) {
+        if (message.toString() == 'SUCCESS') {
+          showToast('✅ Successfully pushed to TV!');
+          channel.sink.close();
+        }
+      }, onError: (error) {
+        showToast('❌ Sync connection error');
+        debugPrint('WS Error: $error');
+      });
+    } catch (e) {
+      debugPrint('Error sending cookies: $e');
+      showToast('❌ Failed to connect to TV address');
+    }
   }
 }
