@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Storage Permissions for reading session_config.json -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
     <!-- Android hardware feature requirements and exclusions for cross-platform support -->
     <uses-feature
         android:name="android.hardware.touchscreen"
@@ -30,7 +34,8 @@
         android:label="Flutter Browser Next"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@mipmap/ic_launcher">
+        android:banner="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
         
         <!-- FileProvider required for secure APK installation on Android 7.0+ -->
         <provider
