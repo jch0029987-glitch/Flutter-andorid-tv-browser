@@ -91,6 +91,20 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
               _canGoForward = forward;
             });
 
+            // --- INJECT MOBILE DEVTOOLS (ERUDA) VIA CDN ---
+            await _controller.runJavaScript('''
+              (function () {
+                if (window._erudaInjected) return;
+                window._erudaInjected = true;
+                var script = document.createElement('script');
+                script.src = "https://cdn.jsdelivr.net/npm/eruda";
+                script.onload = function () { 
+                  eruda.init(); 
+                };
+                document.body.appendChild(script);
+              })();
+            ''');
+
             if (url.contains('facebook.com')) {
               _controller.runJavaScript('''
                 (function() {
@@ -112,7 +126,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
                     var container = document.createElement('div');
                     container.id = 'tv-react-helper-root';
                     container.style.position = 'fixed';
-                    container.style.bottom = '20px';
+                    container.style.bottom = '75px'; // Offset to avoid overlapping Eruda button
                     container.style.right = '20px';
                     container.style.zIndex = '999999';
                     document.body.appendChild(container);
@@ -190,7 +204,7 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
         ),
       );
 
-    // Initialize startup sequence: grant permissions / check files before loading web view
+    // Initialize startup sequence
     _initAppSequence();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -263,7 +277,6 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
           final file = File(path);
           if (await file.exists()) {
             targetFile = file;
-            debugPrint('📁 Found session file at: $path');
             break;
           }
         } catch (_) {}
@@ -271,26 +284,49 @@ class _BrowserHomePageState extends State<BrowserHomePage> {
 
       if (targetFile != null) {
         final contents = await targetFile.readAsString();
-        final data = jsonDecode(contents);
+        final decodedData = jsonDecode(contents);
         
-        final String cUser = data['c_user'] ?? '';
-        final String xs = data['xs'] ?? '';
+        final cookieManager = WebViewCookieManager();
+        List<dynamic> cookiesList = [];
 
-        if (cUser.isNotEmpty && xs.isNotEmpty) {
-          final cookieManager = WebViewCookieManager();
-          await cookieManager.setCookie(
-            WebViewCookie(name: 'c_user', value: cUser, domain: '.facebook.com', path: '/'),
-          );
-          await cookieManager.setCookie(
-            WebViewCookie(name: 'xs', value: xs, domain: '.facebook.com', path: '/'),
-          );
-          debugPrint('🍪 Loaded session cookies successfully!');
-          _showToast('🍪 Cookies Loaded!\nc_user: $cUser');
+        // Dynamic parser for multi-cookie array maps
+        if (decodedData is List) {
+          cookiesList = decodedData;
+        } else if (decodedData is Map && decodedData.containsKey('cookies')) {
+          cookiesList = decodedData['cookies'];
+        } else if (decodedData is Map) {
+          decodedData.forEach((key, value) {
+            cookiesList.add({'name': key, 'value': value, 'domain': '.facebook.com', 'path': '/'});
+          });
+        }
+
+        int injectedCount = 0;
+        for (var cookieData in cookiesList) {
+          final String name = cookieData['name'] ?? '';
+          final String value = cookieData['value'] ?? '';
+          String domain = cookieData['domain'] ?? '.facebook.com';
+          final String path = cookieData['path'] ?? '/';
+
+          if (name.isNotEmpty && value.isNotEmpty) {
+            if (!domain.startsWith('.')) {
+              domain = '.$domain';
+            }
+
+            await cookieManager.setCookie(
+              WebViewCookie(name: name, value: value, domain: domain, path: path),
+            );
+            injectedCount++;
+          }
+        }
+
+        if (injectedCount > 0) {
+          debugPrint('🍪 Successfully injected $injectedCount cookies!');
+          _showToast('🍪 Loaded $injectedCount Cookies Successfully!');
+          _controller.reload();
         } else {
-          _showToast('⚠️ session_config.json missing c_user or xs');
+          _showToast('⚠️ No valid cookies found in JSON');
         }
       } else {
-        debugPrint('session_config.json not found in any standard Download path.');
         _showToast('⚠️ session_config.json not found in Download');
       }
     } catch (e) {
